@@ -12,4 +12,5 @@ dependencies = [
     "pandas>=3.0.3",
     "pillow>=12.2.0",
     "pygame>=2.6.1",
+    "yt-dlp>=2026.6.9",
 ]

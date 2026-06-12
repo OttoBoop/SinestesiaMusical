@@ -1,7 +1,8 @@
 import os
 import io
-import json
+import re
 import base64
+import threading
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -9,6 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import librosa
+import yt_dlp
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
@@ -18,6 +20,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 CHUNK_SIZE = 1024
 RATE = 44100
+
+# Track download progress per job
+download_jobs = {}
+download_lock = threading.Lock()
 
 
 def autocorrelate(signal):
@@ -75,12 +81,14 @@ def generate_spiral_image(radius):
     fig.patch.set_facecolor('white')
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight',
-                facecolor='white')
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
     plt.close(fig)
     buf.seek(0)
-    img_b64 = base64.b64encode(buf.read()).decode('utf-8')
-    return img_b64
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+def is_youtube_url(text):
+    return bool(re.search(r'(youtube\.com/watch|youtu\.be/)', text))
 
 
 @app.route('/')
@@ -104,7 +112,127 @@ def upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    return jsonify({'times': times, 'frequencies': freqs})
+    return jsonify({'times': times, 'frequencies': freqs, 'audioFile': 'audio.mp3'})
+
+
+@app.route('/search')
+def search_youtube():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'error': 'No query provided'}), 400
+
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+        'default_search': 'ytsearch8',
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f'ytsearch8:{query}', download=False)
+            results = []
+            for entry in info.get('entries', []):
+                if entry:
+                    duration = entry.get('duration')
+                    dur_str = ''
+                    if duration:
+                        m, s = divmod(int(duration), 60)
+                        dur_str = f'{m}:{s:02d}'
+                    results.append({
+                        'id': entry.get('id', ''),
+                        'title': entry.get('title', 'Unknown'),
+                        'channel': entry.get('uploader') or entry.get('channel', ''),
+                        'duration': dur_str,
+                        'thumbnail': entry.get('thumbnail') or f"https://i.ytimg.com/vi/{entry.get('id','')}/mqdefault.jpg",
+                        'url': f"https://www.youtube.com/watch?v={entry.get('id', '')}",
+                    })
+            return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/youtube-download', methods=['POST'])
+def youtube_download():
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+
+    job_id = 'yt_job'
+    with download_lock:
+        download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None}
+
+    out_path = os.path.join(UPLOAD_FOLDER, 'audio.%(ext)s')
+
+    def do_download():
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+                downloaded = d.get('downloaded_bytes', 0)
+                pct = int(downloaded / total * 80)
+                with download_lock:
+                    download_jobs[job_id]['progress'] = pct
+            elif d['status'] == 'finished':
+                with download_lock:
+                    download_jobs[job_id]['progress'] = 85
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': out_path,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+            'no_warnings': True,
+            'progress_hooks': [progress_hook],
+        }
+
+        try:
+            # Remove old audio file
+            for f in os.listdir(UPLOAD_FOLDER):
+                if f.startswith('audio.'):
+                    try:
+                        os.remove(os.path.join(UPLOAD_FOLDER, f))
+                    except Exception:
+                        pass
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            mp3_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
+            with download_lock:
+                download_jobs[job_id]['progress'] = 90
+
+            times, freqs = analyze_frequencies(mp3_path)
+
+            with download_lock:
+                download_jobs[job_id].update({
+                    'status': 'done',
+                    'progress': 100,
+                    'times': times,
+                    'frequencies': freqs,
+                    'audioFile': 'audio.mp3',
+                })
+        except Exception as e:
+            with download_lock:
+                download_jobs[job_id].update({'status': 'error', 'error': str(e)})
+
+    t = threading.Thread(target=do_download, daemon=True)
+    t.start()
+    return jsonify({'jobId': job_id})
+
+
+@app.route('/youtube-status')
+def youtube_status():
+    job_id = request.args.get('jobId', 'yt_job')
+    with download_lock:
+        job = download_jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify(job)
 
 
 @app.route('/spiral')
