@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Musical Frequency Visualizer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: #0a0a0f;
+            color: #e0e0ff;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        header {
+            width: 100%;
+            padding: 24px 32px;
+            background: linear-gradient(135deg, #1a0a2e 0%, #16213e 100%);
+            border-bottom: 1px solid #2a1a4e;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+
+        header p {
+            margin-top: 6px;
+            color: #8888aa;
+            font-size: 0.95rem;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 960px;
+            padding: 32px 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 28px;
+        }
+
+        .upload-card {
+            width: 100%;
+            background: #111128;
+            border: 2px dashed #2a1a4e;
+            border-radius: 16px;
+            padding: 36px;
+            text-align: center;
+            transition: border-color 0.2s;
+            cursor: pointer;
+        }
+
+        .upload-card:hover, .upload-card.drag-over {
+            border-color: #7c3aed;
+        }
+
+        .upload-card input[type="file"] {
+            display: none;
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+
+        .upload-card h2 {
+            font-size: 1.2rem;
+            color: #c4c4e0;
+            margin-bottom: 8px;
+        }
+
+        .upload-card p {
+            color: #6666aa;
+            font-size: 0.88rem;
+        }
+
+        .btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 28px;
+            background: linear-gradient(135deg, #7c3aed, #2563eb);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        .btn:hover { opacity: 0.9; }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+        #file-name {
+            margin-top: 12px;
+            font-size: 0.85rem;
+            color: #7c3aed;
+            font-weight: 500;
+        }
+
+        .status-bar {
+            width: 100%;
+            background: #111128;
+            border-radius: 10px;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 0.9rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #6666aa;
+            flex-shrink: 0;
+        }
+
+        .status-dot.analyzing { background: #f59e0b; animation: pulse 1s infinite; }
+        .status-dot.ready { background: #34d399; }
+        .status-dot.playing { background: #60a5fa; animation: pulse 0.8s infinite; }
+        .status-dot.error { background: #f87171; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .visualizer-area {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .spiral-container {
+            width: 480px;
+            height: 480px;
+            max-width: 100%;
+            background: #0d0d1a;
+            border-radius: 16px;
+            border: 1px solid #1e1e3a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .spiral-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: opacity 0.1s;
+        }
+
+        .spiral-placeholder {
+            color: #333355;
+            font-size: 0.9rem;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .spiral-placeholder .big-icon {
+            font-size: 4rem;
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        .controls {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .freq-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #111128;
+            border-radius: 10px;
+            padding: 12px 20px;
+        }
+
+        .freq-label {
+            font-size: 0.85rem;
+            color: #6666aa;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .freq-value {
+            font-size: 1.4rem;
+            font-weight: 700;
+            background: linear-gradient(90deg, #a78bfa, #60a5fa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .time-info {
+            font-size: 0.85rem;
+            color: #6666aa;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 6px;
+            background: #1e1e3a;
+            border-radius: 3px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #7c3aed, #2563eb);
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        .playback-controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .playback-controls audio {
+            width: 100%;
+            border-radius: 8px;
+            accent-color: #7c3aed;
+        }
+
+        .info-grid {
+            width: 100%;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .info-card {
+            background: #111128;
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .info-card .label {
+            font-size: 0.75rem;
+            color: #6666aa;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .info-card .value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #c4c4e0;
+            margin-top: 4px;
+        }
+
+        .hidden { display: none !important; }
+
+        @media (max-width: 540px) {
+            .spiral-container { width: 100%; height: 320px; }
+            .info-grid { grid-template-columns: 1fr 1fr; }
+            header h1 { font-size: 1.4rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Musical Frequency Visualizer</h1>
+        <p>Upload an audio file to visualize its frequencies as a musical spiral</p>
+    </header>
+
+    <div class="container">
+        <div class="upload-card" id="drop-zone">
+            <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a">
+            <div class="upload-icon">🎵</div>
+            <h2>Drop your audio file here</h2>
+            <p>Supports MP3, WAV, OGG, FLAC, M4A (max 50MB)</p>
+            <button class="btn" id="browse-btn">Browse Files</button>
+            <div id="file-name"></div>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-dot" id="status-dot"></div>
+            <span id="status-text">Upload an audio file to get started</span>
+        </div>
+
+        <div class="visualizer-area">
+            <div class="spiral-container" id="spiral-container">
+                <div class="spiral-placeholder">
+                    <span class="big-icon">🌀</span>
+                    The spiral will appear here once you upload and analyze audio
+                </div>
+            </div>
+
+            <div class="controls hidden" id="controls">
+                <div class="freq-info">
+                    <div>
+                        <div class="freq-label">Current Frequency</div>
+                        <div class="freq-value"><span id="freq-display">—</span> Hz</div>
+                    </div>
+                    <div class="time-info" id="time-display">0:00 / 0:00</div>
+                </div>
+
+                <div class="progress-track" id="progress-track">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+
+                <audio id="audio-player" controls></audio>
+            </div>
+
+            <div class="info-grid hidden" id="info-grid">
+                <div class="info-card">
+                    <div class="label">Min Frequency</div>
+                    <div class="value" id="min-freq">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="label">Avg Frequency</div>
+                    <div class="value" id="avg-freq">—</div>
+                </div>
+                <div class="info-card">
+                    <div class="label">Max Frequency</div>
+                    <div class="value" id="max-freq">—</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const audioInput = document.getElementById('audio-input');
+        const browseBtn = document.getElementById('browse-btn');
+        const fileNameEl = document.getElementById('file-name');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const spiralContainer = document.getElementById('spiral-container');
+        const controls = document.getElementById('controls');
+        const infoGrid = document.getElementById('info-grid');
+        const audioPlayer = document.getElementById('audio-player');
+        const freqDisplay = document.getElementById('freq-display');
+        const timeDisplay = document.getElementById('time-display');
+        const progressFill = document.getElementById('progress-fill');
+
+        let frequencyData = { times: [], frequencies: [] };
+        let animationId = null;
+        let lastFetchedRadius = null;
+        let isLoading = false;
+
+        function setStatus(state, text) {
+            statusDot.className = 'status-dot ' + state;
+            statusText.textContent = text;
+        }
+
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return m + ':' + String(sec).padStart(2, '0');
+        }
+
+        browseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            audioInput.click();
+        });
+
+        dropZone.addEventListener('click', () => audioInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file) handleFile(file);
+        });
+
+        audioInput.addEventListener('change', () => {
+            if (audioInput.files[0]) handleFile(audioInput.files[0]);
+        });
+
+        async function handleFile(file) {
+            fileNameEl.textContent = file.name;
+            setStatus('analyzing', 'Analyzing audio frequencies… this may take a moment');
+
+            if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
+
+            const formData = new FormData();
+            formData.append('audio', file);
+
+            try {
+                const res = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+
+                if (data.error) {
+                    setStatus('error', 'Error: ' + data.error);
+                    return;
+                }
+
+                frequencyData = data;
+
+                const freqs = data.frequencies;
+                document.getElementById('min-freq').textContent = Math.round(Math.min(...freqs)) + ' Hz';
+                document.getElementById('avg-freq').textContent = Math.round(freqs.reduce((a, b) => a + b, 0) / freqs.length) + ' Hz';
+                document.getElementById('max-freq').textContent = Math.round(Math.max(...freqs)) + ' Hz';
+
+                const audioUrl = URL.createObjectURL(file);
+                audioPlayer.src = audioUrl;
+
+                controls.classList.remove('hidden');
+                infoGrid.classList.remove('hidden');
+                setStatus('ready', 'Ready — press play to start the spiral animation');
+
+                startAnimation();
+
+            } catch (err) {
+                setStatus('error', 'Upload failed: ' + err.message);
+            }
+        }
+
+        function getFreqAtTime(t) {
+            const times = frequencyData.times;
+            const freqs = frequencyData.frequencies;
+            if (!times.length) return null;
+            let lo = 0, hi = times.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi + 1) >> 1;
+                if (times[mid] <= t) lo = mid;
+                else hi = mid - 1;
+            }
+            return freqs[lo];
+        }
+
+        function freqToRadius(freq) {
+            const a = 16.5, rotations = 5, r_max = 1046.5 / 2;
+            const b = Math.log(r_max / a) / (2 * Math.PI * rotations);
+            const phi_max = 10 * Math.PI;
+            const r_values = [];
+            for (let i = 0; i <= 1000; i++) {
+                const phi = (i / 1000) * phi_max;
+                r_values.push(a * Math.exp(b * phi));
+            }
+            for (let i = 0; i < r_values.length; i++) {
+                if (r_values[i] >= freq) return r_values[i];
+            }
+            return r_max;
+        }
+
+        let lastSpiralUrl = null;
+        let fetchTimeout = null;
+
+        function startAnimation() {
+            if (animationId) cancelAnimationFrame(animationId);
+
+            function frame() {
+                if (!audioPlayer.paused && !audioPlayer.ended) {
+                    setStatus('playing', 'Playing — spiral shows current frequency');
+                } else if (audioPlayer.ended) {
+                    setStatus('ready', 'Playback finished');
+                }
+
+                const t = audioPlayer.currentTime;
+                const dur = audioPlayer.duration || 1;
+                const pct = (t / dur) * 100;
+                progressFill.style.width = pct + '%';
+                timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(dur);
+
+                const freq = getFreqAtTime(t);
+                if (freq !== null) {
+                    freqDisplay.textContent = Math.round(freq);
+
+                    if (!isLoading) {
+                        isLoading = true;
+                        fetch('/spiral?freq=' + freq)
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data.image) {
+                                    let img = spiralContainer.querySelector('img');
+                                    if (!img) {
+                                        spiralContainer.innerHTML = '';
+                                        img = document.createElement('img');
+                                        img.alt = 'Spiral visualization';
+                                        spiralContainer.appendChild(img);
+                                    }
+                                    img.src = 'data:image/png;base64,' + data.image;
+                                }
+                                isLoading = false;
+                            })
+                            .catch(() => { isLoading = false; });
+                    }
+                }
+
+                animationId = requestAnimationFrame(frame);
+            }
+
+            animationId = requestAnimationFrame(frame);
+        }
+
+        document.getElementById('progress-track').addEventListener('click', (e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            if (audioPlayer.duration) {
+                audioPlayer.currentTime = pct * audioPlayer.duration;
+            }
+        });
+
+        audioPlayer.addEventListener('play', () => setStatus('playing', 'Playing — spiral shows current frequency'));
+        audioPlayer.addEventListener('pause', () => setStatus('ready', 'Paused'));
+        audioPlayer.addEventListener('ended', () => setStatus('ready', 'Playback finished'));
+    </script>
+</body>
+</html>
