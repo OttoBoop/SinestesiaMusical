@@ -1,113 +1,74 @@
 import os
-import io
 import re
-import base64
 import threading
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import librosa
+from scipy.signal import medfilt
 import yt_dlp
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 RATE = 44100
-SPIRAL_A = 16.5
-SPIRAL_ROTATIONS = 5
-SPIRAL_R_MAX = 1046.5 / 2   # 523.25 — matches the original scripts
-SPIRAL_PHI_MAX = 10 * np.pi
-BG_COLOR = '#0d0d1a'
 
-# Track download progress per job
 download_jobs = {}
 download_lock = threading.Lock()
 
 
 def analyze_frequencies(audio_path):
-    """Use librosa YIN pitch tracker — far more accurate than autocorrelation."""
+    """
+    FFT + Harmonic Product Spectrum (HPS) for polyphonic music.
+
+    Why HPS: regular FFT peaks land on harmonics (2x, 3x the fundamental).
+    HPS multiplies the spectrum by downsampled copies of itself, which
+    reinforces the fundamental bin while suppressing harmonics — giving
+    a robust dominant-pitch estimate even for chords and mixed instruments.
+    """
     y, sr = librosa.load(audio_path, sr=RATE, mono=True)
 
-    hop_length = 512
-    frame_length = 2048
+    n_fft     = 4096   # large window → fine frequency resolution (~10 Hz/bin)
+    hop_length = 512   # ~11.6 ms between frames
 
-    f0 = librosa.yin(
-        y,
-        fmin=librosa.note_to_hz('C2'),   # ~65 Hz
-        fmax=librosa.note_to_hz('C7'),   # ~2093 Hz
-        sr=RATE,
-        frame_length=frame_length,
-        hop_length=hop_length,
-    )
+    # Full magnitude spectrogram
+    D     = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+    freqs = librosa.fft_frequencies(sr=RATE, n_fft=n_fft)
 
-    # Forward-fill unvoiced (near-zero) frames with the last detected pitch
-    peak_freqs = []
-    last_valid = 220.0
-    for freq in f0:
-        if freq > 60:
-            last_valid = float(freq)
-        peak_freqs.append(last_valid)
+    # --- Harmonic Product Spectrum ---
+    # Multiply by versions downsampled by 2×, 3×, 4×, 5×
+    D_hps = D.astype(np.float64).copy()
+    for h in range(2, 6):
+        D_down = D[::h, :]
+        n = min(D_hps.shape[0], D_down.shape[0])
+        D_hps[:n, :] *= D_down[:n, :]
+
+    # Restrict to musical fundamental range: 60 Hz – 1200 Hz
+    fmin_idx = np.searchsorted(freqs, 60.0)
+    fmax_idx = np.searchsorted(freqs, 1200.0)
+    D_band   = D_hps[fmin_idx:fmax_idx, :]
+    f_band   = freqs[fmin_idx:fmax_idx]
+
+    # Peak frequency per frame
+    peak_indices = np.argmax(D_band, axis=0)
+    peak_freqs   = f_band[peak_indices].astype(float)
+
+    # Median filter (kernel=9 frames ≈ 100 ms) to kill transient spikes
+    peak_freqs = medfilt(peak_freqs, kernel_size=9).astype(float)
+
+    # Exponential moving average for smooth animation transitions
+    alpha    = 0.2
+    smoothed = peak_freqs.copy()
+    for i in range(1, len(smoothed)):
+        smoothed[i] = alpha * peak_freqs[i] + (1.0 - alpha) * smoothed[i - 1]
 
     time_axis = librosa.frames_to_time(
-        np.arange(len(peak_freqs)), sr=RATE, hop_length=hop_length
+        np.arange(len(smoothed)), sr=RATE, hop_length=hop_length
     ).tolist()
-    return time_axis, peak_freqs
 
-
-def spiral_r(phi):
-    b = np.log(SPIRAL_R_MAX / SPIRAL_A) / (2 * np.pi * SPIRAL_ROTATIONS)
-    return SPIRAL_A * np.exp(b * phi)
-
-
-def generate_spiral_image(radius):
-    """Render the spiral on a dark background; radius IS the frequency (Hz)."""
-    phi = np.linspace(0, SPIRAL_PHI_MAX, 2000)
-    r = spiral_r(phi)
-
-    colored_mask = r <= radius
-    colored_r   = r[colored_mask]
-    colored_phi = phi[colored_mask]
-
-    if len(colored_phi) == 0:
-        colored_phi = phi[:2]
-        colored_r   = r[:2]
-
-    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={'projection': 'polar'})
-    fig.patch.set_facecolor(BG_COLOR)
-    ax.set_facecolor(BG_COLOR)
-
-    # Faint guide spiral in dim white
-    ax.plot(phi, r, color='#ffffff', linewidth=0.6, alpha=0.12)
-
-    # Colored filled portion — hue tracks angular position
-    final_angle = colored_phi[-1] % (2 * np.pi)
-    hue = final_angle / (2 * np.pi)
-    color = mcolors.hsv_to_rgb((hue, 1.0, 1.0))
-    ax.fill_between(colored_phi, 0, colored_r, color=color, alpha=0.85)
-
-    # Lock the radial axis so the spiral never rescales between frames
-    ax.set_rmax(SPIRAL_R_MAX)
-    ax.set_yticklabels([])
-    ax.set_xticklabels([])
-    ax.grid(False)
-    ax.spines['polar'].set_visible(False)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight',
-                facecolor=BG_COLOR, edgecolor='none')
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode('utf-8')
-
-
-def is_youtube_url(text):
-    return bool(re.search(r'(youtube\.com/watch|youtu\.be/)', text))
+    return time_axis, smoothed.tolist()
 
 
 @app.route('/')
@@ -131,7 +92,7 @@ def upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    return jsonify({'times': times, 'frequencies': freqs, 'audioFile': 'audio.mp3'})
+    return jsonify({'times': times, 'frequencies': freqs})
 
 
 @app.route('/search')
@@ -144,28 +105,29 @@ def search_youtube():
         'quiet': True,
         'no_warnings': True,
         'extract_flat': True,
-        'default_search': 'ytsearch8',
     }
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f'ytsearch8:{query}', download=False)
             results = []
             for entry in info.get('entries', []):
-                if entry:
-                    duration = entry.get('duration')
-                    dur_str = ''
-                    if duration:
-                        m, s = divmod(int(duration), 60)
-                        dur_str = f'{m}:{s:02d}'
-                    results.append({
-                        'id': entry.get('id', ''),
-                        'title': entry.get('title', 'Unknown'),
-                        'channel': entry.get('uploader') or entry.get('channel', ''),
-                        'duration': dur_str,
-                        'thumbnail': entry.get('thumbnail') or f"https://i.ytimg.com/vi/{entry.get('id','')}/mqdefault.jpg",
-                        'url': f"https://www.youtube.com/watch?v={entry.get('id', '')}",
-                    })
+                if not entry:
+                    continue
+                duration = entry.get('duration')
+                dur_str = ''
+                if duration:
+                    m, s = divmod(int(duration), 60)
+                    dur_str = f'{m}:{s:02d}'
+                vid_id = entry.get('id', '')
+                results.append({
+                    'id':        vid_id,
+                    'title':     entry.get('title', 'Unknown'),
+                    'channel':   entry.get('uploader') or entry.get('channel', ''),
+                    'duration':  dur_str,
+                    'thumbnail': entry.get('thumbnail') or
+                                 f'https://i.ytimg.com/vi/{vid_id}/mqdefault.jpg',
+                    'url':       f'https://www.youtube.com/watch?v={vid_id}',
+                })
             return jsonify({'results': results})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -173,8 +135,8 @@ def search_youtube():
 
 @app.route('/youtube-download', methods=['POST'])
 def youtube_download():
-    data = request.get_json()
-    url = (data or {}).get('url', '').strip()
+    data   = request.get_json()
+    url    = (data or {}).get('url', '').strip()
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
@@ -182,23 +144,23 @@ def youtube_download():
     with download_lock:
         download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None}
 
-    out_path = os.path.join(UPLOAD_FOLDER, 'audio.%(ext)s')
+    out_tpl = os.path.join(UPLOAD_FOLDER, 'audio.%(ext)s')
 
     def do_download():
         def progress_hook(d):
             if d['status'] == 'downloading':
-                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+                total      = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
                 downloaded = d.get('downloaded_bytes', 0)
-                pct = int(downloaded / total * 80)
+                pct = int(downloaded / total * 75)
                 with download_lock:
                     download_jobs[job_id]['progress'] = pct
             elif d['status'] == 'finished':
                 with download_lock:
-                    download_jobs[job_id]['progress'] = 85
+                    download_jobs[job_id]['progress'] = 80
 
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': out_path,
+            'outtmpl': out_tpl,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -208,39 +170,34 @@ def youtube_download():
             'no_warnings': True,
             'progress_hooks': [progress_hook],
         }
-
         try:
-            # Remove old audio file
-            for f in os.listdir(UPLOAD_FOLDER):
-                if f.startswith('audio.'):
+            for fname in os.listdir(UPLOAD_FOLDER):
+                if fname.startswith('audio.'):
                     try:
-                        os.remove(os.path.join(UPLOAD_FOLDER, f))
+                        os.remove(os.path.join(UPLOAD_FOLDER, fname))
                     except Exception:
                         pass
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
-            mp3_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
             with download_lock:
-                download_jobs[job_id]['progress'] = 90
+                download_jobs[job_id]['progress'] = 85
 
-            times, freqs = analyze_frequencies(mp3_path)
+            times, freqs = analyze_frequencies(os.path.join(UPLOAD_FOLDER, 'audio.mp3'))
 
             with download_lock:
                 download_jobs[job_id].update({
-                    'status': 'done',
-                    'progress': 100,
-                    'times': times,
+                    'status':      'done',
+                    'progress':    100,
+                    'times':       times,
                     'frequencies': freqs,
-                    'audioFile': 'audio.mp3',
                 })
         except Exception as e:
             with download_lock:
                 download_jobs[job_id].update({'status': 'error', 'error': str(e)})
 
-    t = threading.Thread(target=do_download, daemon=True)
-    t.start()
+    threading.Thread(target=do_download, daemon=True).start()
     return jsonify({'jobId': job_id})
 
 
@@ -252,18 +209,6 @@ def youtube_status():
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify(job)
-
-
-@app.route('/spiral')
-def spiral():
-    try:
-        freq = float(request.args.get('freq', 200))
-        # Frequency maps directly to radius — same as the original scripts
-        radius = max(SPIRAL_A, min(freq, SPIRAL_R_MAX))
-        img_b64 = generate_spiral_image(radius)
-        return jsonify({'image': img_b64})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/audio/<filename>')

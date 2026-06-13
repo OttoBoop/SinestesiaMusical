@@ -24,7 +24,6 @@
             border-bottom: 1px solid #2a1a4e;
             text-align: center;
         }
-
         header h1 {
             font-size: 1.8rem;
             font-weight: 700;
@@ -33,7 +32,6 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-
         header p { margin-top: 4px; color: #8888aa; font-size: 0.9rem; }
 
         .container {
@@ -46,7 +44,7 @@
             gap: 20px;
         }
 
-        /* ── Source tabs ── */
+        /* ── Tabs ── */
         .source-tabs {
             width: 100%;
             display: flex;
@@ -55,7 +53,6 @@
             padding: 4px;
             gap: 4px;
         }
-
         .tab-btn {
             flex: 1;
             padding: 9px 12px;
@@ -72,7 +69,6 @@
             justify-content: center;
             gap: 6px;
         }
-
         .tab-btn.active {
             background: linear-gradient(135deg, #7c3aed, #2563eb);
             color: #fff;
@@ -82,7 +78,7 @@
         .panel { width: 100%; display: none; }
         .panel.active { display: block; }
 
-        /* ── File upload ── */
+        /* ── Upload ── */
         .upload-card {
             width: 100%;
             background: #111128;
@@ -100,14 +96,9 @@
         .upload-card p { color: #6666aa; font-size: 0.85rem; }
         #file-name { margin-top: 10px; font-size: 0.82rem; color: #7c3aed; font-weight: 500; }
 
-        /* ── YouTube panel ── */
+        /* ── YouTube ── */
         .yt-panel { display: flex; flex-direction: column; gap: 14px; }
-
-        .search-row {
-            display: flex;
-            gap: 8px;
-        }
-
+        .search-row { display: flex; gap: 8px; }
         .search-input {
             flex: 1;
             background: #111128;
@@ -122,6 +113,7 @@
         .search-input:focus { border-color: #7c3aed; }
         .search-input::placeholder { color: #44447a; }
 
+        /* ── Buttons ── */
         .btn {
             padding: 10px 22px;
             background: linear-gradient(135deg, #7c3aed, #2563eb);
@@ -137,33 +129,20 @@
         .btn:hover { opacity: 0.88; }
         .btn:active { transform: scale(0.97); }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-sm {
-            padding: 7px 16px;
-            font-size: 0.82rem;
-        }
-        .btn-outline {
-            background: transparent;
-            border: 1.5px solid #7c3aed;
-            color: #a78bfa;
-        }
-        .btn-outline:hover { background: #7c3aed22; }
-
+        .btn-sm { padding: 7px 16px; font-size: 0.82rem; }
         .upload-card .btn { margin-top: 14px; }
 
-        /* ── Search results ── */
+        /* ── Results ── */
         .results-list {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            max-height: 340px;
+            max-height: 320px;
             overflow-y: auto;
             padding-right: 4px;
         }
-
         .results-list::-webkit-scrollbar { width: 5px; }
-        .results-list::-webkit-scrollbar-track { background: transparent; }
         .results-list::-webkit-scrollbar-thumb { background: #2a1a4e; border-radius: 4px; }
-
         .result-item {
             display: flex;
             align-items: center;
@@ -176,16 +155,13 @@
             transition: border-color 0.18s, background 0.18s;
         }
         .result-item:hover { border-color: #7c3aed; background: #15153a; }
-
         .result-thumb {
-            width: 80px;
-            height: 50px;
+            width: 80px; height: 50px;
             border-radius: 6px;
             object-fit: cover;
             flex-shrink: 0;
             background: #1e1e3a;
         }
-
         .result-info { flex: 1; min-width: 0; }
         .result-title {
             font-size: 0.88rem;
@@ -197,11 +173,7 @@
         }
         .result-meta { font-size: 0.75rem; color: #6666aa; margin-top: 3px; }
 
-        .result-use-btn {
-            flex-shrink: 0;
-        }
-
-        /* ── Status bar ── */
+        /* ── Status ── */
         .status-bar {
             width: 100%;
             background: #111128;
@@ -212,7 +184,6 @@
             gap: 12px;
             font-size: 0.88rem;
         }
-
         .status-dot {
             width: 9px; height: 9px;
             border-radius: 50%;
@@ -224,18 +195,12 @@
         .status-dot.playing   { background: #60a5fa; animation: pulse 0.8s infinite; }
         .status-dot.error     { background: #f87171; }
 
-        /* ── Progress bar (download) ── */
-        .dl-progress-wrap {
-            width: 100%;
-            display: none;
-            flex-direction: column;
-            gap: 6px;
-        }
+        /* ── DL progress ── */
+        .dl-progress-wrap { width: 100%; display: none; flex-direction: column; gap: 6px; }
         .dl-progress-wrap.visible { display: flex; }
         .dl-progress-label { font-size: 0.82rem; color: #6666aa; }
         .dl-progress-track {
-            width: 100%;
-            height: 6px;
+            width: 100%; height: 6px;
             background: #1e1e3a;
             border-radius: 3px;
             overflow: hidden;
@@ -262,34 +227,36 @@
             gap: 18px;
         }
 
-        .spiral-container {
-            width: 460px;
-            height: 460px;
+        .spiral-wrap {
+            position: relative;
+            width: 480px;
+            height: 480px;
             max-width: 100%;
-            background: #0d0d1a;
-            border-radius: 16px;
-            border: 1px solid #1a1a35;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
         }
-        .spiral-container img {
+        #spiral-canvas {
             width: 100%;
             height: 100%;
-            object-fit: contain;
+            border-radius: 16px;
+            border: 1px solid #1a1a35;
+            display: block;
         }
         .spiral-placeholder {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             color: #333355;
             font-size: 0.88rem;
             text-align: center;
             padding: 20px;
+            pointer-events: none;
         }
         .spiral-placeholder .big-icon { font-size: 3.5rem; display: block; margin-bottom: 10px; }
 
-        /* ── Playback controls ── */
+        /* ── Controls ── */
         .controls { width: 100%; display: flex; flex-direction: column; gap: 10px; }
-
         .freq-info {
             display: flex;
             justify-content: space-between;
@@ -307,11 +274,10 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
+        .freq-note { font-size: 0.78rem; color: #7c6aaa; margin-top: 1px; }
         .time-info { font-size: 0.82rem; color: #6666aa; }
-
         .progress-track {
-            width: 100%;
-            height: 5px;
+            width: 100%; height: 5px;
             background: #1e1e3a;
             border-radius: 3px;
             overflow: hidden;
@@ -324,33 +290,23 @@
             width: 0%;
             transition: width 0.1s linear;
         }
+        audio { width: 100%; border-radius: 8px; accent-color: #7c3aed; }
 
-        audio {
-            width: 100%;
-            border-radius: 8px;
-            accent-color: #7c3aed;
-        }
-
-        /* ── Stats grid ── */
+        /* ── Stats ── */
         .info-grid {
             width: 100%;
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 10px;
         }
-        .info-card {
-            background: #111128;
-            border-radius: 10px;
-            padding: 14px;
-            text-align: center;
-        }
+        .info-card { background: #111128; border-radius: 10px; padding: 14px; text-align: center; }
         .info-card .label { font-size: 0.72rem; color: #6666aa; text-transform: uppercase; letter-spacing: 0.05em; }
         .info-card .value { font-size: 1.1rem; font-weight: 700; color: #c4c4e0; margin-top: 4px; }
 
         .hidden { display: none !important; }
 
         @media (max-width: 540px) {
-            .spiral-container { height: 300px; }
+            .spiral-wrap { height: 320px; }
             .info-grid { grid-template-columns: 1fr 1fr; }
             header h1 { font-size: 1.3rem; }
             .search-row { flex-direction: column; }
@@ -365,14 +321,12 @@
 
 <div class="container">
 
-    <!-- Source tabs -->
     <div class="source-tabs">
         <button class="tab-btn active" data-tab="file">📁 Upload File</button>
         <button class="tab-btn" data-tab="youtube">▶️ YouTube Search</button>
         <button class="tab-btn" data-tab="ytlink">🔗 YouTube Link</button>
     </div>
 
-    <!-- File upload panel -->
     <div class="panel active" id="panel-file">
         <div class="upload-card" id="drop-zone">
             <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a">
@@ -384,7 +338,6 @@
         </div>
     </div>
 
-    <!-- YouTube search panel -->
     <div class="panel" id="panel-youtube">
         <div class="yt-panel">
             <div class="search-row">
@@ -396,7 +349,6 @@
         </div>
     </div>
 
-    <!-- YouTube link panel -->
     <div class="panel" id="panel-ytlink">
         <div class="yt-panel">
             <div class="search-row">
@@ -407,13 +359,11 @@
         </div>
     </div>
 
-    <!-- Status -->
     <div class="status-bar">
         <div class="status-dot" id="status-dot"></div>
         <span id="status-text">Upload a file or search YouTube to get started</span>
     </div>
 
-    <!-- Download progress -->
     <div class="dl-progress-wrap" id="dl-progress-wrap">
         <div class="dl-progress-label" id="dl-progress-label">Downloading…</div>
         <div class="dl-progress-track">
@@ -421,10 +371,11 @@
         </div>
     </div>
 
-    <!-- Visualizer area -->
     <div class="visualizer-area">
-        <div class="spiral-container" id="spiral-container">
-            <div class="spiral-placeholder">
+
+        <div class="spiral-wrap">
+            <canvas id="spiral-canvas" width="480" height="480"></canvas>
+            <div class="spiral-placeholder" id="spiral-placeholder">
                 <span class="big-icon">🌀</span>
                 The spiral will appear here once audio is loaded
             </div>
@@ -435,6 +386,7 @@
                 <div>
                     <div class="freq-label">Current Frequency</div>
                     <div class="freq-value"><span id="freq-display">—</span> Hz</div>
+                    <div class="freq-note" id="note-display"></div>
                 </div>
                 <div class="time-info" id="time-display">0:00 / 0:00</div>
             </div>
@@ -458,293 +410,450 @@
                 <div class="value" id="max-freq">—</div>
             </div>
         </div>
-    </div>
 
+    </div>
 </div>
 
 <script>
-    // ── DOM refs ──
-    const dropZone        = document.getElementById('drop-zone');
-    const audioInput      = document.getElementById('audio-input');
-    const browseBtn       = document.getElementById('browse-btn');
-    const fileNameEl      = document.getElementById('file-name');
-    const statusDot       = document.getElementById('status-dot');
-    const statusText      = document.getElementById('status-text');
-    const spiralContainer = document.getElementById('spiral-container');
-    const controls        = document.getElementById('controls');
-    const infoGrid        = document.getElementById('info-grid');
-    const audioPlayer     = document.getElementById('audio-player');
-    const freqDisplay     = document.getElementById('freq-display');
-    const timeDisplay     = document.getElementById('time-display');
-    const progressFill    = document.getElementById('progress-fill');
-    const dlProgressWrap  = document.getElementById('dl-progress-wrap');
-    const dlProgressFill  = document.getElementById('dl-progress-fill');
-    const dlProgressLabel = document.getElementById('dl-progress-label');
+// ─────────────────────────────────────────────
+//  Spiral math (mirrors the Python constants)
+// ─────────────────────────────────────────────
+const SPIRAL_A         = 16.5;
+const SPIRAL_ROTATIONS = 5;
+const SPIRAL_R_MAX     = 1046.5 / 2;   // 523.25
+const SPIRAL_PHI_MAX   = 10 * Math.PI;
+const SPIRAL_B         = Math.log(SPIRAL_R_MAX / SPIRAL_A) / (2 * Math.PI * SPIRAL_ROTATIONS);
+const N_SPIRAL_PTS     = 2000;
+const BG               = '#0d0d1a';
 
-    let frequencyData = { times: [], frequencies: [] };
-    let animationId   = null;
-    let isLoading     = false;
+// Pre-compute the full spiral point array once
+const _PHI = new Float64Array(N_SPIRAL_PTS + 1);
+const _R   = new Float64Array(N_SPIRAL_PTS + 1);
+for (let i = 0; i <= N_SPIRAL_PTS; i++) {
+    const phi  = (i / N_SPIRAL_PTS) * SPIRAL_PHI_MAX;
+    _PHI[i]    = phi;
+    _R[i]      = SPIRAL_A * Math.exp(SPIRAL_B * phi);
+}
 
-    // ── Tabs ──
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
-        });
-    });
+// HSV → [r,g,b] in 0-255
+function hsvToRgb(h, s, v) {
+    const i  = Math.floor(h * 6);
+    const f  = h * 6 - i;
+    const p  = v * (1 - s);
+    const q  = v * (1 - f * s);
+    const t  = v * (1 - (1 - f) * s);
+    let r, g, b;
+    switch (i % 6) {
+        case 0: r=v; g=t; b=p; break;
+        case 1: r=q; g=v; b=p; break;
+        case 2: r=p; g=v; b=t; break;
+        case 3: r=p; g=q; b=v; break;
+        case 4: r=t; g=p; b=v; break;
+        case 5: r=v; g=p; b=q; break;
+    }
+    return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
 
-    // ── Helpers ──
-    function setStatus(state, text) {
-        statusDot.className = 'status-dot ' + state;
-        statusText.textContent = text;
+// Frequency → musical note name
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+function freqToNote(freq) {
+    if (freq <= 0) return '';
+    const semitones = Math.round(12 * Math.log2(freq / 440));
+    const noteIdx   = ((semitones % 12) + 12) % 12;
+    const octave    = Math.floor((semitones + 57) / 12);
+    return NOTE_NAMES[noteIdx] + octave;
+}
+
+// ─────────────────────────────────────────────
+//  Canvas spiral renderer  (runs at 60 fps)
+// ─────────────────────────────────────────────
+const canvas = document.getElementById('spiral-canvas');
+const ctx    = canvas.getContext('2d');
+
+function drawSpiral(freq) {
+    const W  = canvas.width;
+    const H  = canvas.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    const margin = 18;
+    const scale  = (Math.min(W, H) / 2 - margin) / SPIRAL_R_MAX;
+
+    // Background
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Clamp radius
+    const radius = Math.max(SPIRAL_A, Math.min(freq, SPIRAL_R_MAX));
+
+    // Find last index where r <= radius
+    let coloredEnd = 0;
+    for (let i = 0; i <= N_SPIRAL_PTS; i++) {
+        if (_R[i] <= radius) coloredEnd = i;
+        else break;
     }
 
-    function formatTime(s) {
-        const m = Math.floor(s / 60);
-        const sec = Math.floor(s % 60);
-        return m + ':' + String(sec).padStart(2, '0');
+    // Polar → canvas Cartesian (rotate so phi=0 points up)
+    function toXY(phi, r) {
+        return [
+            cx + scale * r * Math.sin(phi),
+            cy - scale * r * Math.cos(phi),
+        ];
     }
 
-    function showDlProgress(visible, pct = 0, label = 'Downloading…') {
-        if (visible) {
-            dlProgressWrap.classList.add('visible');
-            dlProgressFill.style.width = pct + '%';
-            dlProgressLabel.textContent = label;
-        } else {
-            dlProgressWrap.classList.remove('visible');
+    // ── Faint guide spiral (full) ──
+    ctx.beginPath();
+    for (let i = 0; i <= N_SPIRAL_PTS; i++) {
+        const [x, y] = toXY(_PHI[i], _R[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else         ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth   = 1.0;
+    ctx.stroke();
+
+    if (coloredEnd < 2) return;
+
+    // ── Colored fill: trace outer edge, close to centre ──
+    // Use two layers for glow effect
+    const phiLast    = _PHI[coloredEnd];
+    const finalAngle = phiLast % (2 * Math.PI);
+    const hue        = finalAngle / (2 * Math.PI);
+    const [r, g, b]  = hsvToRgb(hue, 1, 1);
+    const fillColor  = `rgba(${r},${g},${b},0.82)`;
+    const glowColor  = `rgba(${r},${g},${b},0.18)`;
+
+    // Main fill
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    for (let i = 0; i <= coloredEnd; i++) {
+        const [x, y] = toXY(_PHI[i], _R[i]);
+        ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    // Soft glow on top (larger, more transparent)
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    for (let i = 0; i <= coloredEnd; i++) {
+        const [x, y] = toXY(_PHI[i], _R[i]);
+        ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = glowColor;
+    ctx.shadowColor  = `rgb(${r},${g},${b})`;
+    ctx.shadowBlur   = 22;
+    ctx.fill();
+    ctx.shadowBlur   = 0;
+
+    // Bright leading edge stroke
+    if (coloredEnd > 0) {
+        ctx.beginPath();
+        const [x0, y0] = toXY(_PHI[coloredEnd - 1], _R[coloredEnd - 1]);
+        const [x1, y1] = toXY(_PHI[coloredEnd],     _R[coloredEnd]);
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.strokeStyle = `rgba(${r},${g},${b},1)`;
+        ctx.lineWidth   = 2.5;
+        ctx.stroke();
+    }
+}
+
+// Draw a static dark placeholder on load
+(function() {
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Draw faint guide spiral so canvas isn't totally empty
+    const cx = canvas.width / 2, cy = canvas.height / 2;
+    const scale = (Math.min(canvas.width, canvas.height) / 2 - 18) / SPIRAL_R_MAX;
+    ctx.beginPath();
+    for (let i = 0; i <= N_SPIRAL_PTS; i++) {
+        const phi = _PHI[i], r = _R[i];
+        const x = cx + scale * r * Math.sin(phi);
+        const y = cy - scale * r * Math.cos(phi);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+})();
+
+// ─────────────────────────────────────────────
+//  State & helpers
+// ─────────────────────────────────────────────
+const statusDot      = document.getElementById('status-dot');
+const statusText     = document.getElementById('status-text');
+const controls       = document.getElementById('controls');
+const infoGrid       = document.getElementById('info-grid');
+const audioPlayer    = document.getElementById('audio-player');
+const freqDisplay    = document.getElementById('freq-display');
+const noteDisplay    = document.getElementById('note-display');
+const timeDisplay    = document.getElementById('time-display');
+const progressFill   = document.getElementById('progress-fill');
+const dlProgressWrap = document.getElementById('dl-progress-wrap');
+const dlProgressFill = document.getElementById('dl-progress-fill');
+const dlProgressLabel= document.getElementById('dl-progress-label');
+const placeholder    = document.getElementById('spiral-placeholder');
+
+let freqTimes = [];
+let freqValues = [];
+let animId = null;
+
+// Interpolate frequency at playback time
+function freqAtTime(t) {
+    if (!freqTimes.length) return SPIRAL_A;
+    let lo = 0, hi = freqTimes.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (freqTimes[mid] <= t) lo = mid; else hi = mid - 1;
+    }
+    // Linear interpolation to neighbour frame
+    if (lo < freqTimes.length - 1) {
+        const t0 = freqTimes[lo],  t1 = freqTimes[lo + 1];
+        const f0 = freqValues[lo], f1 = freqValues[lo + 1];
+        const frac = (t - t0) / (t1 - t0 + 1e-9);
+        return f0 + (f1 - f0) * frac;
+    }
+    return freqValues[lo];
+}
+
+function setStatus(state, text) {
+    statusDot.className = 'status-dot ' + state;
+    statusText.textContent = text;
+}
+
+function formatTime(s) {
+    const m = Math.floor(s / 60);
+    return m + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+}
+
+function showDlProgress(visible, pct = 0, label = 'Downloading…') {
+    if (visible) {
+        dlProgressWrap.classList.add('visible');
+        dlProgressFill.style.width = pct + '%';
+        dlProgressLabel.textContent = label;
+    } else {
+        dlProgressWrap.classList.remove('visible');
+    }
+}
+
+function applyFrequencyData(data) {
+    freqTimes  = data.times;
+    freqValues = data.frequencies;
+
+    const freqs = freqValues;
+    document.getElementById('min-freq').textContent = Math.round(Math.min(...freqs)) + ' Hz';
+    document.getElementById('avg-freq').textContent = Math.round(freqs.reduce((a,b)=>a+b,0)/freqs.length) + ' Hz';
+    document.getElementById('max-freq').textContent = Math.round(Math.max(...freqs)) + ' Hz';
+
+    controls.classList.remove('hidden');
+    infoGrid.classList.remove('hidden');
+    placeholder.style.display = 'none';
+    showDlProgress(false);
+    setStatus('ready', 'Ready — press play to start the spiral animation');
+    startAnimation();
+}
+
+// ─────────────────────────────────────────────
+//  Animation loop
+// ─────────────────────────────────────────────
+function stopAnimation() {
+    if (animId) { cancelAnimationFrame(animId); animId = null; }
+}
+
+function startAnimation() {
+    stopAnimation();
+    function frame() {
+        const t   = audioPlayer.currentTime;
+        const dur = audioPlayer.duration || 1;
+
+        progressFill.style.width = (t / dur * 100) + '%';
+        timeDisplay.textContent  = formatTime(t) + ' / ' + formatTime(dur);
+
+        const freq = freqAtTime(t);
+        freqDisplay.textContent = Math.round(freq);
+        noteDisplay.textContent = freqToNote(freq);
+
+        drawSpiral(freq);
+
+        if (!audioPlayer.paused && !audioPlayer.ended) {
+            setStatus('playing', 'Playing — spiral tracking current frequency');
         }
-    }
 
-    function applyFrequencyData(data) {
-        frequencyData = data;
-        const freqs = data.frequencies;
-        document.getElementById('min-freq').textContent = Math.round(Math.min(...freqs)) + ' Hz';
-        document.getElementById('avg-freq').textContent = Math.round(freqs.reduce((a, b) => a + b, 0) / freqs.length) + ' Hz';
-        document.getElementById('max-freq').textContent = Math.round(Math.max(...freqs)) + ' Hz';
-        controls.classList.remove('hidden');
-        infoGrid.classList.remove('hidden');
+        animId = requestAnimationFrame(frame);
+    }
+    animId = requestAnimationFrame(frame);
+}
+
+// ─────────────────────────────────────────────
+//  Tabs
+// ─────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    });
+});
+
+// ─────────────────────────────────────────────
+//  File upload
+// ─────────────────────────────────────────────
+const dropZone   = document.getElementById('drop-zone');
+const audioInput = document.getElementById('audio-input');
+const browseBtn  = document.getElementById('browse-btn');
+const fileNameEl = document.getElementById('file-name');
+
+browseBtn.addEventListener('click', e => { e.stopPropagation(); audioInput.click(); });
+dropZone.addEventListener('click', () => audioInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+audioInput.addEventListener('change', () => { if (audioInput.files[0]) handleFile(audioInput.files[0]); });
+
+async function handleFile(file) {
+    fileNameEl.textContent = file.name;
+    setStatus('analyzing', 'Analyzing audio with HPS frequency tracking…');
+    stopAnimation();
+
+    const formData = new FormData();
+    formData.append('audio', file);
+    try {
+        const res  = await fetch('/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.error) { setStatus('error', 'Error: ' + data.error); return; }
+        audioPlayer.src = URL.createObjectURL(file);
+        applyFrequencyData(data);
+    } catch (err) {
+        setStatus('error', 'Upload failed: ' + err.message);
+    }
+}
+
+// ─────────────────────────────────────────────
+//  YouTube search
+// ─────────────────────────────────────────────
+const ytSearchInput = document.getElementById('yt-search-input');
+const ytSearchBtn   = document.getElementById('yt-search-btn');
+const resultsList   = document.getElementById('results-list');
+
+ytSearchBtn.addEventListener('click', doSearch);
+ytSearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+async function doSearch() {
+    const q = ytSearchInput.value.trim();
+    if (!q) return;
+    ytSearchBtn.disabled = true;
+    ytSearchBtn.textContent = 'Searching…';
+    resultsList.classList.add('hidden');
+    resultsList.innerHTML = '';
+    try {
+        const res  = await fetch('/search?q=' + encodeURIComponent(q));
+        const data = await res.json();
+        if (data.error) { setStatus('error', 'Search error: ' + data.error); return; }
+        renderResults(data.results);
+    } catch (err) {
+        setStatus('error', 'Search failed: ' + err.message);
+    } finally {
+        ytSearchBtn.disabled = false;
+        ytSearchBtn.textContent = 'Search';
+    }
+}
+
+function renderResults(results) {
+    resultsList.innerHTML = '';
+    results.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'result-item';
+        item.innerHTML = `
+            <img class="result-thumb" src="${r.thumbnail}" alt="" loading="lazy"
+                 onerror="this.style.display='none'">
+            <div class="result-info">
+                <div class="result-title">${escHtml(r.title)}</div>
+                <div class="result-meta">${escHtml(r.channel)}${r.duration ? ' · ' + r.duration : ''}</div>
+            </div>
+            <button class="btn btn-sm">Use</button>`;
+        item.querySelector('.btn').addEventListener('click', e => {
+            e.stopPropagation(); loadYouTubeUrl(r.url, r.title);
+        });
+        item.addEventListener('click', () => loadYouTubeUrl(r.url, r.title));
+        resultsList.appendChild(item);
+    });
+    resultsList.classList.remove('hidden');
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─────────────────────────────────────────────
+//  YouTube link
+// ─────────────────────────────────────────────
+const ytLinkInput = document.getElementById('yt-link-input');
+const ytLinkBtn   = document.getElementById('yt-link-btn');
+ytLinkBtn.addEventListener('click', () => { const u = ytLinkInput.value.trim(); if (u) loadYouTubeUrl(u); });
+ytLinkInput.addEventListener('keydown', e => { if (e.key === 'Enter') { const u = ytLinkInput.value.trim(); if (u) loadYouTubeUrl(u); } });
+
+async function loadYouTubeUrl(url, title) {
+    stopAnimation();
+    setStatus('analyzing', title ? `Downloading "${title}"…` : 'Loading from YouTube…');
+    showDlProgress(true, 0, 'Starting download…');
+    try {
+        const res  = await fetch('/youtube-download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (data.error) { setStatus('error', 'Error: ' + data.error); showDlProgress(false); return; }
+        pollJob(data.jobId, title);
+    } catch (err) {
+        setStatus('error', 'Failed: ' + err.message);
         showDlProgress(false);
-        setStatus('ready', 'Ready — press play to start the spiral animation');
-        startAnimation();
     }
+}
 
-    // ── File upload ──
-    browseBtn.addEventListener('click', e => { e.stopPropagation(); audioInput.click(); });
-    dropZone.addEventListener('click', () => audioInput.click());
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-    dropZone.addEventListener('drop', e => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-over');
-        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-    });
-    audioInput.addEventListener('change', () => { if (audioInput.files[0]) handleFile(audioInput.files[0]); });
-
-    async function handleFile(file) {
-        fileNameEl.textContent = file.name;
-        setStatus('analyzing', 'Analyzing audio frequencies… this may take a moment');
-        stopAnimation();
-
-        const formData = new FormData();
-        formData.append('audio', file);
+function pollJob(jobId, title) {
+    const iv = setInterval(async () => {
         try {
-            const res  = await fetch('/upload', { method: 'POST', body: formData });
+            const res  = await fetch('/youtube-status?jobId=' + jobId);
             const data = await res.json();
-            if (data.error) { setStatus('error', 'Error: ' + data.error); return; }
-            audioPlayer.src = URL.createObjectURL(file);
-            applyFrequencyData(data);
-        } catch (err) {
-            setStatus('error', 'Upload failed: ' + err.message);
-        }
-    }
-
-    // ── YouTube search ──
-    const ytSearchInput = document.getElementById('yt-search-input');
-    const ytSearchBtn   = document.getElementById('yt-search-btn');
-    const resultsList   = document.getElementById('results-list');
-
-    ytSearchBtn.addEventListener('click', doSearch);
-    ytSearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
-
-    async function doSearch() {
-        const q = ytSearchInput.value.trim();
-        if (!q) return;
-        ytSearchBtn.disabled = true;
-        ytSearchBtn.textContent = 'Searching…';
-        resultsList.classList.add('hidden');
-        resultsList.innerHTML = '';
-
-        try {
-            const res  = await fetch('/search?q=' + encodeURIComponent(q));
-            const data = await res.json();
-            if (data.error) { alert('Search error: ' + data.error); return; }
-            renderResults(data.results);
-        } catch (err) {
-            alert('Search failed: ' + err.message);
-        } finally {
-            ytSearchBtn.disabled = false;
-            ytSearchBtn.textContent = 'Search';
-        }
-    }
-
-    function renderResults(results) {
-        resultsList.innerHTML = '';
-        results.forEach(r => {
-            const item = document.createElement('div');
-            item.className = 'result-item';
-            item.innerHTML = `
-                <img class="result-thumb" src="${r.thumbnail}" alt="" loading="lazy"
-                     onerror="this.style.display='none'">
-                <div class="result-info">
-                    <div class="result-title">${escHtml(r.title)}</div>
-                    <div class="result-meta">${escHtml(r.channel)}${r.duration ? ' · ' + r.duration : ''}</div>
-                </div>
-                <button class="btn btn-sm result-use-btn">Use</button>`;
-            item.querySelector('.result-use-btn').addEventListener('click', e => {
-                e.stopPropagation();
-                loadYouTubeUrl(r.url, r.title);
-            });
-            item.addEventListener('click', () => loadYouTubeUrl(r.url, r.title));
-            resultsList.appendChild(item);
-        });
-        resultsList.classList.remove('hidden');
-    }
-
-    function escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    // ── YouTube link ──
-    const ytLinkInput = document.getElementById('yt-link-input');
-    const ytLinkBtn   = document.getElementById('yt-link-btn');
-
-    ytLinkBtn.addEventListener('click', () => {
-        const url = ytLinkInput.value.trim();
-        if (url) loadYouTubeUrl(url);
-    });
-    ytLinkInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { const url = ytLinkInput.value.trim(); if (url) loadYouTubeUrl(url); }
-    });
-
-    // ── Core: load from YouTube ──
-    async function loadYouTubeUrl(url, title) {
-        stopAnimation();
-        setStatus('analyzing', title ? `Loading "${title}"…` : 'Loading from YouTube…');
-        showDlProgress(true, 0, 'Starting download…');
-
-        try {
-            const res  = await fetch('/youtube-download', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url }),
-            });
-            const data = await res.json();
-            if (data.error) { setStatus('error', 'Error: ' + data.error); showDlProgress(false); return; }
-            pollJob(data.jobId, title);
-        } catch (err) {
-            setStatus('error', 'Failed: ' + err.message);
-            showDlProgress(false);
-        }
-    }
-
-    function pollJob(jobId, title) {
-        const interval = setInterval(async () => {
-            try {
-                const res  = await fetch('/youtube-status?jobId=' + jobId);
-                const data = await res.json();
-
-                if (data.status === 'downloading') {
-                    const pct = data.progress || 0;
-                    showDlProgress(true, pct, `Downloading… ${pct}%`);
-                    setStatus('analyzing', title ? `Downloading "${title}"…` : 'Downloading from YouTube…');
-                } else if (data.status === 'done') {
-                    clearInterval(interval);
-                    showDlProgress(true, 100, 'Analyzing frequencies…');
-                    // Re-fetch audio from server
-                    audioPlayer.src = '/audio/audio.mp3?t=' + Date.now();
-                    applyFrequencyData(data);
-                } else if (data.status === 'error') {
-                    clearInterval(interval);
-                    showDlProgress(false);
-                    setStatus('error', 'Error: ' + (data.error || 'Unknown error'));
-                }
-            } catch (err) {
-                clearInterval(interval);
+            if (data.status === 'downloading') {
+                const pct = data.progress || 0;
+                showDlProgress(true, pct, pct < 80 ? `Downloading… ${pct}%` : 'Analyzing frequencies…');
+            } else if (data.status === 'done') {
+                clearInterval(iv);
+                audioPlayer.src = '/audio/audio.mp3?t=' + Date.now();
+                applyFrequencyData(data);
+            } else if (data.status === 'error') {
+                clearInterval(iv);
                 showDlProgress(false);
-                setStatus('error', 'Polling failed: ' + err.message);
+                setStatus('error', 'Error: ' + (data.error || 'Unknown'));
             }
-        }, 800);
-    }
-
-    // ── Spiral animation ──
-    function stopAnimation() {
-        if (animationId) { cancelAnimationFrame(animationId); animationId = null; }
-    }
-
-    function getFreqAtTime(t) {
-        const { times, frequencies } = frequencyData;
-        if (!times.length) return null;
-        let lo = 0, hi = times.length - 1;
-        while (lo < hi) {
-            const mid = (lo + hi + 1) >> 1;
-            if (times[mid] <= t) lo = mid;
-            else hi = mid - 1;
+        } catch (err) {
+            clearInterval(iv);
+            showDlProgress(false);
+            setStatus('error', 'Poll failed: ' + err.message);
         }
-        return frequencies[lo];
-    }
+    }, 800);
+}
 
-    function startAnimation() {
-        stopAnimation();
-        function frame() {
-            if (!audioPlayer.paused && !audioPlayer.ended) {
-                setStatus('playing', 'Playing — spiral shows current frequency');
-            }
+// ─────────────────────────────────────────────
+//  Playback event wiring
+// ─────────────────────────────────────────────
+document.getElementById('progress-track').addEventListener('click', e => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (audioPlayer.duration)
+        audioPlayer.currentTime = ((e.clientX - rect.left) / rect.width) * audioPlayer.duration;
+});
 
-            const t   = audioPlayer.currentTime;
-            const dur = audioPlayer.duration || 1;
-            progressFill.style.width = (t / dur * 100) + '%';
-            timeDisplay.textContent = formatTime(t) + ' / ' + formatTime(dur);
-
-            const freq = getFreqAtTime(t);
-            if (freq !== null) {
-                freqDisplay.textContent = Math.round(freq);
-                if (!isLoading) {
-                    isLoading = true;
-                    fetch('/spiral?freq=' + freq)
-                        .then(r => r.json())
-                        .then(data => {
-                            if (data.image) {
-                                let img = spiralContainer.querySelector('img');
-                                if (!img) {
-                                    spiralContainer.innerHTML = '';
-                                    img = document.createElement('img');
-                                    img.alt = 'Spiral visualization';
-                                    spiralContainer.appendChild(img);
-                                }
-                                img.src = 'data:image/png;base64,' + data.image;
-                            }
-                            isLoading = false;
-                        })
-                        .catch(() => { isLoading = false; });
-                }
-            }
-            animationId = requestAnimationFrame(frame);
-        }
-        animationId = requestAnimationFrame(frame);
-    }
-
-    document.getElementById('progress-track').addEventListener('click', e => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        if (audioPlayer.duration) {
-            audioPlayer.currentTime = ((e.clientX - rect.left) / rect.width) * audioPlayer.duration;
-        }
-    });
-
-    audioPlayer.addEventListener('play',  () => setStatus('playing', 'Playing — spiral shows current frequency'));
-    audioPlayer.addEventListener('pause', () => setStatus('ready',   'Paused'));
-    audioPlayer.addEventListener('ended', () => setStatus('ready',   'Playback finished'));
+audioPlayer.addEventListener('play',  () => setStatus('playing', 'Playing — spiral tracking current frequency'));
+audioPlayer.addEventListener('pause', () => setStatus('ready',   'Paused'));
+audioPlayer.addEventListener('ended', () => setStatus('ready',   'Playback finished'));
 </script>
 </body>
 </html>
