@@ -18,70 +18,89 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max upload
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-CHUNK_SIZE = 1024
 RATE = 44100
+SPIRAL_A = 16.5
+SPIRAL_ROTATIONS = 5
+SPIRAL_R_MAX = 1046.5 / 2   # 523.25 — matches the original scripts
+SPIRAL_PHI_MAX = 10 * np.pi
+BG_COLOR = '#0d0d1a'
 
 # Track download progress per job
 download_jobs = {}
 download_lock = threading.Lock()
 
 
-def autocorrelate(signal):
-    correlation = np.correlate(signal, signal, mode="full")
-    return correlation[len(correlation) // 2:]
-
-
 def analyze_frequencies(audio_path):
+    """Use librosa YIN pitch tracker — far more accurate than autocorrelation."""
     y, sr = librosa.load(audio_path, sr=RATE, mono=True)
-    audio_data = y.astype(np.float32)
 
+    hop_length = 512
+    frame_length = 2048
+
+    f0 = librosa.yin(
+        y,
+        fmin=librosa.note_to_hz('C2'),   # ~65 Hz
+        fmax=librosa.note_to_hz('C7'),   # ~2093 Hz
+        sr=RATE,
+        frame_length=frame_length,
+        hop_length=hop_length,
+    )
+
+    # Forward-fill unvoiced (near-zero) frames with the last detected pitch
     peak_freqs = []
-    for i in range(0, len(audio_data), CHUNK_SIZE):
-        data = audio_data[i:i + CHUNK_SIZE]
-        if len(data) < CHUNK_SIZE:
-            continue
-        window = np.hamming(len(data))
-        windowed_data = data * window
-        autocorr_data = autocorrelate(windowed_data)
-        peak_idx = np.argmax(autocorr_data[100:CHUNK_SIZE // 2]) + 100
-        peak_freq = RATE / peak_idx
-        peak_freqs.append(float(peak_freq))
+    last_valid = 220.0
+    for freq in f0:
+        if freq > 60:
+            last_valid = float(freq)
+        peak_freqs.append(last_valid)
 
-    time_axis = (np.arange(len(peak_freqs)) * (CHUNK_SIZE / RATE)).tolist()
+    time_axis = librosa.frames_to_time(
+        np.arange(len(peak_freqs)), sr=RATE, hop_length=hop_length
+    ).tolist()
     return time_axis, peak_freqs
 
 
-def spiral_r(phi, a=16.5, rotations=5, r_max=1046.5 / 2):
-    b = np.log(r_max / a) / (2 * np.pi * rotations)
-    return a * np.exp(b * phi)
+def spiral_r(phi):
+    b = np.log(SPIRAL_R_MAX / SPIRAL_A) / (2 * np.pi * SPIRAL_ROTATIONS)
+    return SPIRAL_A * np.exp(b * phi)
 
 
 def generate_spiral_image(radius):
-    phi = np.linspace(0, 10 * np.pi, 1000)
+    """Render the spiral on a dark background; radius IS the frequency (Hz)."""
+    phi = np.linspace(0, SPIRAL_PHI_MAX, 2000)
     r = spiral_r(phi)
-    colored_r = r[r <= radius]
-    colored_phi = phi[:len(colored_r)]
+
+    colored_mask = r <= radius
+    colored_r   = r[colored_mask]
+    colored_phi = phi[colored_mask]
 
     if len(colored_phi) == 0:
-        colored_phi = phi[:1]
-        colored_r = r[:1]
+        colored_phi = phi[:2]
+        colored_r   = r[:2]
 
     fig, ax = plt.subplots(figsize=(6, 6), subplot_kw={'projection': 'polar'})
-    ax.plot(phi, r, 'k', linewidth=0.5, alpha=0.3)
+    fig.patch.set_facecolor(BG_COLOR)
+    ax.set_facecolor(BG_COLOR)
 
+    # Faint guide spiral in dim white
+    ax.plot(phi, r, color='#ffffff', linewidth=0.6, alpha=0.12)
+
+    # Colored filled portion — hue tracks angular position
     final_angle = colored_phi[-1] % (2 * np.pi)
     hue = final_angle / (2 * np.pi)
-    color = mcolors.hsv_to_rgb((hue, 1, 1))
-    ax.fill_between(colored_phi, 0, colored_r, color=color, alpha=0.8)
+    color = mcolors.hsv_to_rgb((hue, 1.0, 1.0))
+    ax.fill_between(colored_phi, 0, colored_r, color=color, alpha=0.85)
 
+    # Lock the radial axis so the spiral never rescales between frames
+    ax.set_rmax(SPIRAL_R_MAX)
     ax.set_yticklabels([])
     ax.set_xticklabels([])
-    plt.grid(False)
+    ax.grid(False)
     ax.spines['polar'].set_visible(False)
-    fig.patch.set_facecolor('white')
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight',
+                facecolor=BG_COLOR, edgecolor='none')
     plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('utf-8')
@@ -239,12 +258,8 @@ def youtube_status():
 def spiral():
     try:
         freq = float(request.args.get('freq', 200))
-        r_max = 1046.5 / 2
-        a = 16.5
-        rotations = 5
-        b = np.log(r_max / a) / (2 * np.pi * rotations)
-        radius = a * np.exp(b * (freq / 100.0 * 10 * np.pi / 600))
-        radius = max(16, min(radius, r_max))
+        # Frequency maps directly to radius — same as the original scripts
+        radius = max(SPIRAL_A, min(freq, SPIRAL_R_MAX))
         img_b64 = generate_spiral_image(radius)
         return jsonify({'image': img_b64})
     except Exception as e:
