@@ -10,7 +10,8 @@ import yt_dlp
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER  = 'uploads'
+COOKIES_FILE   = os.path.join(UPLOAD_FOLDER, 'yt_cookies.txt')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 RATE = 44100
@@ -19,46 +20,51 @@ download_jobs = {}
 download_lock = threading.Lock()
 
 
+# ── yt-dlp base options ───────────────────────────────────────────────────────
+
+def yt_base_opts():
+    """Return yt-dlp options common to every call, including cookies if saved."""
+    opts = {
+        'quiet':       True,
+        'no_warnings': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+    }
+    if os.path.isfile(COOKIES_FILE):
+        opts['cookiefile'] = COOKIES_FILE
+    return opts
+
+
+# ── Audio analysis ────────────────────────────────────────────────────────────
+
 def analyze_frequencies(audio_path):
     """
     FFT + Harmonic Product Spectrum (HPS) for polyphonic music.
-
-    Why HPS: regular FFT peaks land on harmonics (2x, 3x the fundamental).
-    HPS multiplies the spectrum by downsampled copies of itself, which
-    reinforces the fundamental bin while suppressing harmonics — giving
-    a robust dominant-pitch estimate even for chords and mixed instruments.
+    Works for chords and mixed-instrument audio unlike YIN/autocorrelation.
     """
     y, sr = librosa.load(audio_path, sr=RATE, mono=True)
 
-    n_fft     = 4096   # large window → fine frequency resolution (~10 Hz/bin)
-    hop_length = 512   # ~11.6 ms between frames
+    n_fft      = 4096
+    hop_length = 512
 
-    # Full magnitude spectrogram
     D     = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
     freqs = librosa.fft_frequencies(sr=RATE, n_fft=n_fft)
 
-    # --- Harmonic Product Spectrum ---
-    # Multiply by versions downsampled by 2×, 3×, 4×, 5×
     D_hps = D.astype(np.float64).copy()
     for h in range(2, 6):
         D_down = D[::h, :]
         n = min(D_hps.shape[0], D_down.shape[0])
         D_hps[:n, :] *= D_down[:n, :]
 
-    # Restrict to musical fundamental range: 60 Hz – 1200 Hz
     fmin_idx = np.searchsorted(freqs, 60.0)
     fmax_idx = np.searchsorted(freqs, 1200.0)
     D_band   = D_hps[fmin_idx:fmax_idx, :]
     f_band   = freqs[fmin_idx:fmax_idx]
 
-    # Peak frequency per frame
     peak_indices = np.argmax(D_band, axis=0)
     peak_freqs   = f_band[peak_indices].astype(float)
 
-    # Median filter (kernel=9 frames ≈ 100 ms) to kill transient spikes
     peak_freqs = medfilt(peak_freqs, kernel_size=9).astype(float)
 
-    # Exponential moving average for smooth animation transitions
     alpha    = 0.2
     smoothed = peak_freqs.copy()
     for i in range(1, len(smoothed)):
@@ -71,6 +77,8 @@ def analyze_frequencies(audio_path):
     return time_axis, smoothed.tolist()
 
 
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -81,7 +89,7 @@ def upload():
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file provided'}), 400
     f = request.files['audio']
-    if f.filename == '':
+    if not f.filename:
         return jsonify({'error': 'No file selected'}), 400
 
     save_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
@@ -95,27 +103,58 @@ def upload():
     return jsonify({'times': times, 'frequencies': freqs})
 
 
+# ── Cookies endpoints ─────────────────────────────────────────────────────────
+
+@app.route('/cookies-status')
+def cookies_status():
+    return jsonify({'hasCookies': os.path.isfile(COOKIES_FILE)})
+
+
+@app.route('/set-cookies', methods=['POST'])
+def set_cookies():
+    data    = request.get_json()
+    content = (data or {}).get('cookies', '').strip()
+    if not content:
+        return jsonify({'error': 'No cookie content provided'}), 400
+
+    # Basic sanity check — Netscape cookies.txt starts with a header comment
+    if 'youtube.com' not in content and '.youtube.com' not in content:
+        return jsonify({'error': 'This doesn\'t look like a YouTube cookies file. '
+                                 'Make sure to export cookies while on youtube.com.'}), 400
+
+    with open(COOKIES_FILE, 'w') as fh:
+        fh.write(content)
+
+    return jsonify({'ok': True})
+
+
+@app.route('/clear-cookies', methods=['POST'])
+def clear_cookies():
+    if os.path.isfile(COOKIES_FILE):
+        os.remove(COOKIES_FILE)
+    return jsonify({'ok': True})
+
+
+# ── YouTube search ────────────────────────────────────────────────────────────
+
 @app.route('/search')
 def search_youtube():
     query = request.args.get('q', '').strip()
     if not query:
         return jsonify({'error': 'No query provided'}), 400
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'mweb']}},
-    }
+    opts = yt_base_opts()
+    opts['extract_flat'] = True
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f'ytsearch8:{query}', download=False)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info    = ydl.extract_info(f'ytsearch8:{query}', download=False)
             results = []
             for entry in info.get('entries', []):
                 if not entry:
                     continue
                 duration = entry.get('duration')
-                dur_str = ''
+                dur_str  = ''
                 if duration:
                     m, s = divmod(int(duration), 60)
                     dur_str = f'{m}:{s:02d}'
@@ -134,10 +173,12 @@ def search_youtube():
         return jsonify({'error': str(e)}), 500
 
 
+# ── YouTube download ──────────────────────────────────────────────────────────
+
 @app.route('/youtube-download', methods=['POST'])
 def youtube_download():
-    data   = request.get_json()
-    url    = (data or {}).get('url', '').strip()
+    data = request.get_json()
+    url  = (data or {}).get('url', '').strip()
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
 
@@ -159,7 +200,8 @@ def youtube_download():
                 with download_lock:
                     download_jobs[job_id]['progress'] = 80
 
-        ydl_opts = {
+        opts = yt_base_opts()
+        opts.update({
             'format': 'bestaudio/best',
             'outtmpl': out_tpl,
             'postprocessors': [{
@@ -167,11 +209,9 @@ def youtube_download():
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'quiet': True,
-            'no_warnings': True,
             'progress_hooks': [progress_hook],
-            'extractor_args': {'youtube': {'player_client': ['android', 'mweb']}},
-        }
+        })
+
         try:
             for fname in os.listdir(UPLOAD_FOLDER):
                 if fname.startswith('audio.'):
@@ -180,7 +220,7 @@ def youtube_download():
                     except Exception:
                         pass
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
 
             with download_lock:
