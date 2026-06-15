@@ -105,6 +105,7 @@ def search_youtube():
         'quiet': True,
         'no_warnings': True,
         'extract_flat': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'mweb']}},
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -169,6 +170,7 @@ def youtube_download():
             'quiet': True,
             'no_warnings': True,
             'progress_hooks': [progress_hook],
+            'extractor_args': {'youtube': {'player_client': ['android', 'mweb']}},
         }
         try:
             for fname in os.listdir(UPLOAD_FOLDER):
