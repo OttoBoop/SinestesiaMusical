@@ -1,0 +1,1 @@
+- [yt-dlp YouTube downloads](youtube-ytdlp-downloads.md) — download failures from this server's IP aren't a bot/IP block; the real fix is a server-side JS runtime. Invidious/Piped/cobalt/cookies/OAuth are all dead ends.
