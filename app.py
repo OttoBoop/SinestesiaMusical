@@ -1,4 +1,7 @@
 import os
+import glob
+import shutil
+import tempfile
 import threading
 from urllib.parse import urlparse
 import numpy as np
@@ -17,6 +20,124 @@ RATE = 44100
 
 download_jobs = {}
 download_lock = threading.Lock()
+
+# ── Proof-of-Origin (PO) token provider ─────────────────────────────────────────
+
+# A small companion service (bgutil-ytdlp-pot-provider, started by
+# scripts/run_pot_provider.sh) generates the PO tokens YouTube requires to pass
+# its "confirm you're not a bot" check — automatically, with no account/login.
+# yt-dlp talks to it over HTTP via the bgutil plugin.
+POTOKEN_PORT    = 4416
+POTOKEN_BASEURL = f'http://127.0.0.1:{POTOKEN_PORT}'
+
+# Player clients to try with yt-dlp. 'android_vr' serves direct audio URLs that
+# need no signature solving (the most reliable path from a datacenter IP); the
+# remaining clients work hand-in-hand with the PO token provider so the
+# authenticated path stays reliable when YouTube tightens its anti-bot checks.
+YTDLP_PLAYER_CLIENTS = ['default', 'android_vr', 'web_safari', 'mweb', 'tv']
+
+
+# ── yt-dlp options ────────────────────────────────────────────────────────────
+
+def ytdl_base_opts():
+    """
+    Base yt-dlp options shared by search and download.
+
+    'deno' is installed as the JS runtime so signature / n-challenge solving
+    works. yt-dlp's default client list includes android_vr, which serves
+    direct audio URLs without signature solving — this is what makes downloads
+    work reliably from a datacenter IP with zero user setup.
+    """
+    return {
+        'quiet':        True,
+        'no_warnings':  True,
+        'js_runtimes':  {'deno': {}},
+    }
+
+
+def yt_extractor_args():
+    """Extractor args wiring the PO-token provider and player clients.
+
+    Layered on top of ``ytdl_base_opts()`` so downloads benefit from both the
+    deno/android_vr path and automatic PO tokens.
+    """
+    return {
+        'youtube': {'player_client': YTDLP_PLAYER_CLIENTS},
+        # Tell the bgutil plugin where the PO-token provider is listening.
+        'youtubepot-bgutilhttp': {'base_url': [POTOKEN_BASEURL]},
+    }
+
+
+def cleanup_downloads() -> None:
+    """Remove any previous audio file or stray yt-dlp temp dir/partial file.
+
+    Leaving these around is what caused the intermittent
+    'Unable to rename file: audio.mp4.part -> audio.mp4' crash.
+    """
+    for fname in os.listdir(UPLOAD_FOLDER):
+        path = os.path.join(UPLOAD_FOLDER, fname)
+        if fname.startswith('audio.') or fname.startswith('ytdl_'):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+            except OSError:
+                pass
+
+
+def download_via_ytdlp(url: str, base_path: str, progress_cb=None) -> str:
+    """
+    Authenticated yt-dlp download with deno JS runtime + automatic PO-token support.
+
+    Downloads **audio only** into an isolated temp directory (so a stale file can
+    never cause the 'Unable to rename file' crash), transcodes to mp3, then moves
+    the result to ``base_path + '.mp3'``. The temp dir is always cleaned up.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix='ytdl_', dir=UPLOAD_FOLDER)
+    out_tpl = os.path.join(tmp_dir, '%(id)s.%(ext)s')
+
+    def hook(d):
+        if d['status'] == 'downloading' and progress_cb:
+            total      = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
+            downloaded = d.get('downloaded_bytes', 0)
+            progress_cb(int(downloaded / total * 65))
+        elif d['status'] == 'finished' and progress_cb:
+            progress_cb(80)
+
+    opts = ytdl_base_opts()
+    opts.update({
+        # Audio-only selection. Never falls back to '/best', which could pull a
+        # full multi-hundred-MB video file.
+        'format':       'bestaudio[ext=m4a]/bestaudio/bestaudio*',
+        'outtmpl':      out_tpl,
+        'paths':        {'home': tmp_dir, 'temp': tmp_dir},
+        'noplaylist':   True,
+        'overwrites':   True,
+        'postprocessors': [{
+            'key':             'FFmpegExtractAudio',
+            'preferredcodec':  'mp3',
+            'preferredquality': '192',
+        }],
+        'progress_hooks': [hook],
+        'extractor_args': yt_extractor_args(),
+    })
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+
+        produced = glob.glob(os.path.join(tmp_dir, '*.mp3'))
+        if not produced:
+            raise RuntimeError('yt-dlp finished but no mp3 was produced')
+
+        mp3_path = base_path + '.mp3'
+        if os.path.exists(mp3_path):
+            os.remove(mp3_path)
+        shutil.move(produced[0], mp3_path)
+        return mp3_path
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── Audio analysis ────────────────────────────────────────────────────────────
@@ -56,24 +177,6 @@ def analyze_frequencies(audio_path: str):
     ).tolist()
 
     return time_axis, smoothed.tolist()
-
-
-# ── yt-dlp options ────────────────────────────────────────────────────────────
-
-def ytdl_base_opts():
-    """
-    Base yt-dlp options.
-
-    'deno' is installed as the JS runtime so signature / n-challenge solving
-    works. yt-dlp's default client list includes android_vr, which serves
-    direct audio URLs without signature solving — this is what makes downloads
-    work reliably from a datacenter IP with zero user setup.
-    """
-    return {
-        'quiet':        True,
-        'no_warnings':  True,
-        'js_runtimes':  {'deno': {}},
-    }
 
 
 ALLOWED_YT_HOSTS = {
@@ -130,7 +233,8 @@ def search_youtube():
         return jsonify({'error': 'No query provided'}), 400
 
     opts = ytdl_base_opts()
-    opts['extract_flat'] = True
+    opts['extract_flat']  = True
+    opts['extractor_args'] = yt_extractor_args()
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -174,50 +278,20 @@ def youtube_download():
     with download_lock:
         download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None}
 
-    out_tpl = os.path.join(UPLOAD_FOLDER, 'audio.%(ext)s')
+    base_path = os.path.join(UPLOAD_FOLDER, 'audio')
 
     def do_download():
-        def progress_hook(d):
-            if d['status'] == 'downloading':
-                total      = d.get('total_bytes') or d.get('total_bytes_estimate') or 1
-                downloaded = d.get('downloaded_bytes', 0)
-                pct = int(downloaded / total * 75)
-                with download_lock:
-                    download_jobs[job_id]['progress'] = pct
-            elif d['status'] == 'finished':
-                with download_lock:
-                    download_jobs[job_id]['progress'] = 80
+        def set_progress(pct):
+            with download_lock:
+                download_jobs[job_id]['progress'] = pct
 
-        opts = ytdl_base_opts()
-        opts.update({
-            'format':  'bestaudio/best',
-            'outtmpl': out_tpl,
-            'postprocessors': [{
-                'key':             'FFmpegExtractAudio',
-                'preferredcodec':  'mp3',
-                'preferredquality': '192',
-            }],
-            'progress_hooks': [progress_hook],
-        })
+        cleanup_downloads()
 
         try:
-            # Clear any previous audio file
-            for fname in os.listdir(UPLOAD_FOLDER):
-                if fname.startswith('audio.'):
-                    try:
-                        os.remove(os.path.join(UPLOAD_FOLDER, fname))
-                    except OSError:
-                        pass
+            download_via_ytdlp(url, base_path, set_progress)
+            mp3_path = base_path + '.mp3'
 
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-
-            with download_lock:
-                download_jobs[job_id]['progress'] = 85
-
-            mp3_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
-            if not os.path.exists(mp3_path):
-                raise RuntimeError('Download finished but no audio file was produced')
+            set_progress(85)
             times, freqs = analyze_frequencies(mp3_path)
 
             with download_lock:
@@ -227,9 +301,18 @@ def youtube_download():
                     'times':       times,
                     'frequencies': freqs,
                 })
+
         except Exception as e:
+            # Log the technical detail server-side, show a friendly message to the user.
+            cleanup_downloads()
+            print(f'[youtube-download] failed for {url!r} — {e}', flush=True)
             with download_lock:
-                download_jobs[job_id].update({'status': 'error', 'error': str(e)})
+                download_jobs[job_id].update({
+                    'status': 'error',
+                    'error':  "Couldn't fetch this track from YouTube right now. "
+                              "It may be unavailable or temporarily blocked — "
+                              "please try again or pick another song.",
+                })
 
     threading.Thread(target=do_download, daemon=True).start()
     return jsonify({'jobId': job_id})

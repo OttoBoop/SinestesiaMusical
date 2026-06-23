@@ -12,14 +12,17 @@ A web-based musical frequency visualizer that analyzes audio files and renders a
 
 - **Backend:** Flask (Python) — handles audio upload, frequency analysis with `librosa`, and on-demand spiral image generation with `matplotlib`
 - **Frontend:** Single-page HTML/CSS/JS app served by Flask — handles drag-and-drop upload, audio playback, and live spiral updates
+- **YouTube downloads:** Primary path is authenticated `yt-dlp` (audio-only) with automatic Proof-of-Origin (PO) tokens to pass YouTube's anti-bot check; public Invidious mirrors are a secondary fallback. No login/account is ever required.
+- **PO token provider:** A small companion service (`bgutil-ytdlp-pot-provider`, Node) runs on `127.0.0.1:4416` and generates PO tokens automatically. It is started by the "POT Provider" workflow via `scripts/run_pot_provider.sh`, which self-heals by building the server (`scripts/setup_pot_provider.sh`) if missing.
 
 ## Running the App
 
-```bash
-python app.py
-```
+Two workflows run together:
 
-Runs on `0.0.0.0:5000`.
+- **POT Provider** — `bash scripts/run_pot_provider.sh` (background PO-token service on port 4416)
+- **Start application** — `python app.py` (web app on `0.0.0.0:5000`)
+
+The app still works if the PO provider is down — downloads simply lose the automatic anti-bot token and fall back to mirrors. The vendored provider lives under `vendor/` (gitignored) and is rebuilt automatically after merges by `scripts/post-merge.sh`.
 
 ## Original Scripts
 

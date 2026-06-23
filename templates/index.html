@@ -362,6 +362,7 @@
     <div class="status-bar">
         <div class="status-dot" id="status-dot"></div>
         <span id="status-text">Upload a file or search YouTube to get started</span>
+        <button class="btn btn-sm hidden" id="retry-btn" style="margin-left:auto;">↻ Retry</button>
     </div>
 
     <div class="dl-progress-wrap" id="dl-progress-wrap">
@@ -595,10 +596,17 @@ const dlProgressWrap = document.getElementById('dl-progress-wrap');
 const dlProgressFill = document.getElementById('dl-progress-fill');
 const dlProgressLabel= document.getElementById('dl-progress-label');
 const placeholder    = document.getElementById('spiral-placeholder');
+const retryBtn       = document.getElementById('retry-btn');
 
 let freqTimes = [];
 let freqValues = [];
 let animId = null;
+let lastYtUrl = null;
+let lastYtTitle = null;
+
+retryBtn.addEventListener('click', () => {
+    if (lastYtUrl) loadYouTubeUrl(lastYtUrl, lastYtTitle);
+});
 
 // Interpolate frequency at playback time
 function freqAtTime(t) {
@@ -718,6 +726,7 @@ audioInput.addEventListener('change', () => { if (audioInput.files[0]) handleFil
 
 async function handleFile(file) {
     fileNameEl.textContent = file.name;
+    retryBtn.classList.add('hidden');
     setStatus('analyzing', 'Analyzing audio with HPS frequency tracking…');
     stopAnimation();
 
@@ -799,6 +808,9 @@ ytLinkBtn.addEventListener('click', () => { const u = ytLinkInput.value.trim(); 
 ytLinkInput.addEventListener('keydown', e => { if (e.key === 'Enter') { const u = ytLinkInput.value.trim(); if (u) loadYouTubeUrl(u); } });
 
 async function loadYouTubeUrl(url, title) {
+    lastYtUrl   = url;
+    lastYtTitle = title;
+    retryBtn.classList.add('hidden');
     stopAnimation();
     setStatus('analyzing', title ? `Downloading "${title}"…` : 'Loading from YouTube…');
     showDlProgress(true, 0, 'Starting download…');
@@ -809,12 +821,17 @@ async function loadYouTubeUrl(url, title) {
             body: JSON.stringify({ url }),
         });
         const data = await res.json();
-        if (data.error) { setStatus('error', 'Error: ' + data.error); showDlProgress(false); return; }
+        if (data.error) { failDownload(data.error); return; }
         pollJob(data.jobId, title);
     } catch (err) {
-        setStatus('error', 'Failed: ' + err.message);
-        showDlProgress(false);
+        failDownload('Network error — please check your connection.');
     }
+}
+
+function failDownload(message) {
+    showDlProgress(false);
+    setStatus('error', message);
+    retryBtn.classList.remove('hidden');
 }
 
 function pollJob(jobId, title) {
@@ -827,17 +844,16 @@ function pollJob(jobId, title) {
                 showDlProgress(true, pct, pct < 80 ? `Downloading… ${pct}%` : 'Analyzing frequencies…');
             } else if (data.status === 'done') {
                 clearInterval(iv);
+                retryBtn.classList.add('hidden');
                 audioPlayer.src = '/audio/audio.mp3?t=' + Date.now();
                 applyFrequencyData(data);
             } else if (data.status === 'error') {
                 clearInterval(iv);
-                showDlProgress(false);
-                setStatus('error', 'Error: ' + (data.error || 'Unknown'));
+                failDownload(data.error || 'Download failed — please try again.');
             }
         } catch (err) {
             clearInterval(iv);
-            showDlProgress(false);
-            setStatus('error', 'Poll failed: ' + err.message);
+            failDownload('Lost connection while downloading — please try again.');
         }
     }, 800);
 }
