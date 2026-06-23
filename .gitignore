@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.pythonlibs/
+.cache/
+
+# Node
+node_modules/
+
+# Vendored bgutil PO provider — rebuilt via scripts/setup_pot_provider.sh
+vendor/
+
+# Downloaded / uploaded audio (regenerated at runtime)
+uploads/*.mp3
+uploads/*.mp4
+uploads/*.m4a
+uploads/*.webm
+uploads/*.opus
+uploads/*.part
+uploads/ytdl_*
+
+# Logs
+*.log
