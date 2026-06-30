@@ -54,9 +54,13 @@ externalPort = 3000
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 8099
+externalPort = 8099
+
 [deployment]
-deploymentTarget = "autoscale"
-run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "app:app"]
+deploymentTarget = "vm"
+run = ["bash", "-c", "bash scripts/run_pot_provider.sh & exec gunicorn --bind=0.0.0.0:5000 --reuse-port app:app"]
 
 [postMerge]
 path = "scripts/post-merge.sh"
