@@ -1,13 +1,13 @@
 import os
 import glob
+import json
 import shutil
+import sys
 import tempfile
 import threading
+import subprocess
 from urllib.parse import urlparse
-import numpy as np
 from flask import Flask, render_template, request, jsonify, send_from_directory
-import librosa
-from scipy.signal import medfilt
 import yt_dlp
 
 app = Flask(__name__)
@@ -16,7 +16,11 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-RATE = 44100
+# The frequency analysis runs as an isolated subprocess (analysis.py) so a heavy
+# or very long track can never OOM-kill or hang this web worker. ANALYSIS_TIMEOUT
+# bounds the wait; on the free tier the numpy/scipy analysis is a few seconds.
+ANALYSIS_SCRIPT  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'analysis.py')
+ANALYSIS_TIMEOUT = 120
 
 download_jobs = {}
 download_lock = threading.Lock()
@@ -173,41 +177,56 @@ def download_via_ytdlp(url: str, base_path: str, progress_cb=None) -> str:
 
 # ── Audio analysis ────────────────────────────────────────────────────────────
 
+class AnalysisError(Exception):
+    """Raised when the isolated analysis subprocess fails (timeout/OOM/decode)."""
+
+
 def analyze_frequencies(audio_path: str):
-    """FFT + Harmonic Product Spectrum (HPS) frequency analysis."""
-    y, sr = librosa.load(audio_path, sr=RATE, mono=True)
+    """Analyze ``audio_path`` in an isolated subprocess; return (times, freqs).
 
-    n_fft      = 4096
-    hop_length = 512
+    The real DSP lives in analysis.py and runs as a separate, short-lived process
+    (see the note there). That sandboxes its memory and run time: a track too long
+    or heavy fails the child alone — this worker stays up and we raise an
+    ``AnalysisError`` mapped to a friendly message, instead of hanging at 85% or
+    crashing the instance.
+    """
+    out_path = audio_path + '.analysis.json'
+    try:
+        os.remove(out_path)
+    except OSError:
+        pass
 
-    D     = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
-    freqs = librosa.fft_frequencies(sr=RATE, n_fft=n_fft)
+    try:
+        proc = subprocess.run(
+            [sys.executable, ANALYSIS_SCRIPT, audio_path, out_path],
+            capture_output=True, timeout=ANALYSIS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise AnalysisError(
+            f'analysis timed out after {ANALYSIS_TIMEOUT}s (track too long for this server)')
 
-    D_hps = D.astype(np.float64).copy()
-    for h in range(2, 6):
-        D_down = D[::h, :]
-        n = min(D_hps.shape[0], D_down.shape[0])
-        D_hps[:n, :] *= D_down[:n, :]
+    try:
+        if proc.returncode != 0:
+            detail = (proc.stderr or b'').decode('utf-8', 'replace').strip()[-300:]
+            # A negative return code means a signal — typically -9 (OOM-killed child).
+            if proc.returncode < 0:
+                detail = f'analysis process was killed (signal {-proc.returncode}); {detail}'
+            raise AnalysisError(detail or f'analysis exited with code {proc.returncode}')
 
-    fmin_idx = np.searchsorted(freqs, 60.0)
-    fmax_idx = np.searchsorted(freqs, 1200.0)
-    D_band   = D_hps[fmin_idx:fmax_idx, :]
-    f_band   = freqs[fmin_idx:fmax_idx]
+        try:
+            with open(out_path) as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            raise AnalysisError(f'analysis produced no usable result: {e}')
 
-    peak_indices = np.argmax(D_band, axis=0)
-    peak_freqs   = f_band[peak_indices].astype(float)
-    peak_freqs   = medfilt(peak_freqs, kernel_size=9).astype(float)
-
-    alpha    = 0.2
-    smoothed = peak_freqs.copy()
-    for i in range(1, len(smoothed)):
-        smoothed[i] = alpha * peak_freqs[i] + (1.0 - alpha) * smoothed[i - 1]
-
-    time_axis = librosa.frames_to_time(
-        np.arange(len(smoothed)), sr=RATE, hop_length=hop_length
-    ).tolist()
-
-    return time_axis, smoothed.tolist()
+        if 'error' in data:
+            raise AnalysisError(data['error'])
+        return data['times'], data['frequencies']
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
 
 
 ALLOWED_YT_HOSTS = {
@@ -247,6 +266,22 @@ def friendly_youtube_error(exc) -> str:
             "or temporarily blocked — please try again or pick another song.")
 
 
+def friendly_analysis_error(exc) -> str:
+    """Map an analysis (subprocess) failure to a user-facing message.
+
+    The technical cause is logged server-side; the user just learns it's about the
+    audio being too long/heavy for the server, not a YouTube problem.
+    """
+    msg = str(exc).lower()
+    if 'timed out' in msg or 'killed' in msg or 'signal' in msg or 'memory' in msg:
+        return ("This track is too long or heavy to analyze on our small server. "
+                "Try a shorter song or clip.")
+    if 'decode' in msg or 'empty' in msg:
+        return "We couldn't read this audio. Try another file or song."
+    return ("Something went wrong analyzing this track. Please try again or pick "
+            "another song.")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -267,8 +302,12 @@ def upload():
 
     try:
         times, freqs = analyze_frequencies(save_path)
+    except AnalysisError as e:
+        print(f'[upload] analysis failed for {f.filename!r} — {e}', flush=True)
+        return jsonify({'error': friendly_analysis_error(e)}), 500
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f'[upload] unexpected error for {f.filename!r} — {e}', flush=True)
+        return jsonify({'error': 'Something went wrong analyzing this file.'}), 500
 
     return jsonify({'times': times, 'frequencies': freqs})
 
@@ -349,6 +388,16 @@ def youtube_download():
                     'progress':    100,
                     'times':       times,
                     'frequencies': freqs,
+                })
+
+        except AnalysisError as e:
+            # Download succeeded but analysis failed — not a YouTube problem.
+            cleanup_downloads()
+            print(f'[youtube-download] analysis failed for {url!r} — {e}', flush=True)
+            with download_lock:
+                download_jobs[job_id].update({
+                    'status': 'error',
+                    'error':  friendly_analysis_error(e),
                 })
 
         except Exception as e:
