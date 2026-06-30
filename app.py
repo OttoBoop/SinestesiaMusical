@@ -30,29 +30,43 @@ download_lock = threading.Lock()
 POTOKEN_PORT    = 4416
 POTOKEN_BASEURL = f'http://127.0.0.1:{POTOKEN_PORT}'
 
-# Player clients to try with yt-dlp. 'android_vr' serves direct audio URLs that
-# need no signature solving (the most reliable path from a datacenter IP); the
-# remaining clients work hand-in-hand with the PO token provider so the
-# authenticated path stays reliable when YouTube tightens its anti-bot checks.
-YTDLP_PLAYER_CLIENTS = ['default', 'android_vr', 'web_safari', 'mweb', 'tv']
+# Player clients to try with yt-dlp, in order. 'android_vr' and 'tv' serve audio
+# URLs that need NO PO token (the most reliable path), so they go first; the
+# remaining clients work hand-in-hand with the PO token provider as a fallback.
+YTDLP_PLAYER_CLIENTS = ['android_vr', 'tv', 'default', 'web_safari', 'mweb']
+
+
+# ── Outbound proxy (to dodge YouTube's datacenter-IP block) ─────────────────────
+#
+# YouTube blocks most download requests from datacenter IPs (Render is one). The fix
+# is to egress through a residential-looking IP. By default scripts/start.sh brings up
+# a free Cloudflare WARP proxy and points YTDLP_PROXY at it. Set YTDLP_PROXY to a
+# residential-proxy URL (e.g. http://user:pass@host:port) to use that instead.
+
+def current_proxy():
+    """The proxy URL yt-dlp should egress through, or None for a direct connection."""
+    return (os.environ.get('YTDLP_PROXY') or '').strip() or None
 
 
 # ── yt-dlp options ────────────────────────────────────────────────────────────
 
-def ytdl_base_opts():
+def ytdl_base_opts(proxy=None):
     """
     Base yt-dlp options shared by search and download.
 
-    'deno' is installed as the JS runtime so signature / n-challenge solving
-    works. yt-dlp's default client list includes android_vr, which serves
-    direct audio URLs without signature solving — this is what makes downloads
-    work reliably from a datacenter IP with zero user setup.
+    'deno' is installed as the JS runtime so signature / n-challenge solving works.
+    The client list (YTDLP_PLAYER_CLIENTS) puts android_vr/tv first — they serve
+    audio without a PO token. ``proxy`` (when given) routes the request through a
+    residential-looking IP so YouTube doesn't reject it as datacenter traffic.
     """
-    return {
+    opts = {
         'quiet':        True,
         'no_warnings':  True,
         'js_runtimes':  {'deno': {}},
     }
+    if proxy:
+        opts['proxy'] = proxy
+    return opts
 
 
 def yt_extractor_args():
@@ -105,31 +119,48 @@ def download_via_ytdlp(url: str, base_path: str, progress_cb=None) -> str:
         elif d['status'] == 'finished' and progress_cb:
             progress_cb(80)
 
-    opts = ytdl_base_opts()
-    opts.update({
-        # Audio-only selection. Never falls back to '/best', which could pull a
-        # full multi-hundred-MB video file.
-        'format':       'bestaudio[ext=m4a]/bestaudio/bestaudio*',
-        'outtmpl':      out_tpl,
-        'paths':        {'home': tmp_dir, 'temp': tmp_dir},
-        'noplaylist':   True,
-        'overwrites':   True,
-        'postprocessors': [{
-            'key':             'FFmpegExtractAudio',
-            'preferredcodec':  'mp3',
-            'preferredquality': '192',
-        }],
-        'progress_hooks': [hook],
-        'extractor_args': yt_extractor_args(),
-    })
+    def build_opts(proxy):
+        opts = ytdl_base_opts(proxy)
+        opts.update({
+            # Audio-only selection. Never falls back to '/best', which could pull a
+            # full multi-hundred-MB video file.
+            'format':       'bestaudio[ext=m4a]/bestaudio/bestaudio*',
+            'outtmpl':      out_tpl,
+            'paths':        {'home': tmp_dir, 'temp': tmp_dir},
+            'noplaylist':   True,
+            'overwrites':   True,
+            'postprocessors': [{
+                'key':             'FFmpegExtractAudio',
+                'preferredcodec':  'mp3',
+                'preferredquality': '192',
+            }],
+            'progress_hooks': [hook],
+            'extractor_args': yt_extractor_args(),
+        })
+        return opts
+
+    # Try the proxy first (residential-looking IP), then fall back to a direct
+    # connection — some videos work direct and it costs nothing to try.
+    proxy = current_proxy()
+    attempts = ([(f'proxy ({proxy})', proxy)] if proxy else []) + [('direct', None)]
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
+        last_err = None
+        for label, p in attempts:
+            try:
+                with yt_dlp.YoutubeDL(build_opts(p)) as ydl:
+                    ydl.download([url])
+                if glob.glob(os.path.join(tmp_dir, '*.mp3')):
+                    break
+                last_err = RuntimeError('yt-dlp finished but no mp3 was produced')
+                print(f'[youtube-download] {label}: no mp3 produced', flush=True)
+            except Exception as e:
+                last_err = e
+                print(f'[youtube-download] {label} attempt failed: {e}', flush=True)
 
         produced = glob.glob(os.path.join(tmp_dir, '*.mp3'))
         if not produced:
-            raise RuntimeError('yt-dlp finished but no mp3 was produced')
+            raise last_err or RuntimeError('download failed')
 
         mp3_path = base_path + '.mp3'
         if os.path.exists(mp3_path):
@@ -198,6 +229,24 @@ def is_valid_youtube_url(url: str) -> bool:
     return host in ALLOWED_YT_HOSTS
 
 
+def friendly_youtube_error(exc) -> str:
+    """Map a yt-dlp exception to a useful user-facing message.
+
+    The raw error is always logged server-side; this just decides what the user
+    sees, and whether retrying is worth it.
+    """
+    msg = str(exc).lower()
+    if 'sign in to confirm' in msg or 'not a bot' in msg or 'bot' in msg:
+        return ("YouTube is blocking this download from our server right now "
+                "(anti-bot check). Try again shortly, or try another song.")
+    if any(s in msg for s in ('private', 'unavailable', 'removed', 'age-restricted', 'age restricted')):
+        return "This video can't be downloaded (private, removed, or age-restricted). Try another."
+    if '429' in msg or 'too many requests' in msg:
+        return "We're being rate-limited by YouTube. Please wait a minute and try again."
+    return ("Couldn't fetch this track from YouTube right now. It may be unavailable "
+            "or temporarily blocked — please try again or pick another song.")
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -232,7 +281,7 @@ def search_youtube():
     if not query:
         return jsonify({'error': 'No query provided'}), 400
 
-    opts = ytdl_base_opts()
+    opts = ytdl_base_opts(current_proxy())
     opts['extract_flat']  = True
     opts['extractor_args'] = yt_extractor_args()
 
@@ -309,9 +358,7 @@ def youtube_download():
             with download_lock:
                 download_jobs[job_id].update({
                     'status': 'error',
-                    'error':  "Couldn't fetch this track from YouTube right now. "
-                              "It may be unavailable or temporarily blocked — "
-                              "please try again or pick another song.",
+                    'error':  friendly_youtube_error(e),
                 })
 
     threading.Thread(target=do_download, daemon=True).start()

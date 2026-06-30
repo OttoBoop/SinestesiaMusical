@@ -20,8 +20,9 @@ browser draws a logarithmic spiral synced to playback.
   download. Served by gunicorn in production.
 - **Frontend:** single-page HTML/CSS/JS (`templates/index.html`) — drag-and-drop
   upload, YouTube search/link, audio playback, and the canvas spiral renderer.
-- **YouTube downloads:** authenticated `yt-dlp` (audio-only) with the `deno` JS
-  runtime + automatic Proof-of-Origin (PO) tokens. No login/account required.
+- **YouTube downloads:** `yt-dlp` (audio-only) with the `deno` JS runtime +
+  automatic Proof-of-Origin (PO) tokens, egressing through a free Cloudflare WARP
+  proxy so YouTube doesn't bot-block our datacenter IP. No login/account required.
 - **PO token provider:** a small Node companion service
   (`bgutil-ytdlp-pot-provider`) on `127.0.0.1:4416` that generates PO tokens
   automatically. Built into the image and started alongside the web server.
@@ -58,10 +59,20 @@ Dockerfile and `scripts/start.sh` handle everything.
   starter tiers are fine for typical 3–5 min tracks; very long tracks may need a
   bigger plan (Standard, 2 GB) — or open an issue to make the analysis stream in
   chunks.
-- **YouTube from a datacenter IP.** Render is a datacenter, like Replit was, so
-  YouTube's anti-bot checks apply the same way. The `deno` + `android_vr` path
-  plus PO tokens is what keeps it working; **file upload is rock-solid** and not
-  subject to this.
+- **YouTube from a datacenter IP — and how we beat it.** Render is a datacenter,
+  and in 2026 YouTube blocks most download requests from datacenter IPs regardless
+  of cookies/tokens. The fix is to egress through a residential-looking IP, exactly
+  like the public downloader sites do. We do that **for free** with a **Cloudflare
+  WARP** proxy: the image bundles `wgcf` + `wireproxy`, registers a free WARP
+  identity at build time, and `scripts/start.sh` runs the tunnel and routes yt-dlp
+  through it (the boot logs print `warp=on` and the egress IP). yt-dlp tries the
+  proxy first, then falls back to a direct connection. **File upload is rock-solid**
+  and not subject to any of this.
+- **If WARP isn't reliable enough**, flip to a residential proxy with one setting —
+  no code change: set the `YTDLP_PROXY` env var in the Render dashboard to a proxy
+  URL like `http://user:pass@host:port` (e.g. a ~$6/mo Webshare residential plan).
+  That's just renting an IP — we still own all the download code. When `YTDLP_PROXY`
+  is set, it takes priority and WARP is skipped.
 
 ## Run Locally with Docker
 
