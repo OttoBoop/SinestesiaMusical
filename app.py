@@ -334,4 +334,7 @@ def serve_audio(filename):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Production runs under gunicorn (see scripts/start.sh); this branch is for
+    # local `python app.py`. Honour $PORT so it matches the container default.
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)

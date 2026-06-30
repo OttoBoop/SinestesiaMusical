@@ -1,0 +1,15 @@
+# Render Blueprint — Infrastructure as code for the Musical Frequency Visualizer.
+# Deploy: Render Dashboard → New + → Blueprint → pick this repo. Render reads
+# this file and creates the service automatically.
+# Spec: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: sinestesia-musical
+    runtime: docker
+    plan: free            # change to "starter" ($7/mo, always-on, no cold start)
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /     # GET / returns 200 (the app's index page)
+    # Render injects PORT automatically; start.sh binds gunicorn to it.
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

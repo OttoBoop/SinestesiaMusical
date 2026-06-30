@@ -1,0 +1,24 @@
+# Keep the build context lean and never ship host-only artifacts.
+.git/
+.gitignore
+
+# Python caches / local virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pythonlibs/
+.cache/
+
+# Node
+node_modules/
+
+# The PO-token provider is rebuilt inside the image (see Dockerfile); never copy
+# a host-built one in — it would clobber the image's prebuilt vendor/.
+vendor/
+
+# Runtime-generated audio
+uploads/
+
+# Logs / scratch
+*.log

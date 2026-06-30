@@ -1,11 +1,27 @@
 ---
-name: Deployment target — why this app needs Reserved VM, not autoscale
-description: When an app must be a Reserved VM instead of autoscale on Replit, and how to run a companion service in production
+name: Deployment target — single persistent instance (Docker on Render), not autoscale
+description: Why this app must run as one stateful instance, and how it deploys via Docker on Render (current) — and previously as a Replit Reserved VM (legacy)
 ---
 
-# Deployment target: Reserved VM vs autoscale
+# Deployment target: single stateful instance, never autoscale
 
-This Musical Frequency Visualizer must be published as a **Reserved VM**, not autoscale.
+## Current: Docker on Render (the app left Replit)
+The app deploys via the repo's `Dockerfile` + `render.yaml` Blueprint as a single
+Render **Web Service** (the equivalent of the old Reserved VM — one persistent
+instance, not autoscaled to many).
+- One image bundles all four runtimes: Python 3.12, ffmpeg, deno, Node. The
+  bgutil PO-token provider is cloned + built into `vendor/` at image build time.
+- `scripts/start.sh` is the entrypoint: backgrounds `run_pot_provider.sh` then
+  `exec gunicorn --workers 1 --threads 8 --timeout 180 --bind 0.0.0.0:$PORT app:app`.
+- **Workers MUST stay at 1** (in-memory `download_jobs` dict). Render injects
+  `$PORT`; bind gunicorn to it. `healthCheckPath: /`.
+- Free plan cold-starts after idle; bump to `starter` for always-on. 512 MB RAM
+  is fine for typical songs; very long tracks can OOM the STFT (see app.py).
+- Render is also a datacenter IP, so YouTube anti-bot behaves like it did on
+  Replit — deno + android_vr + PO tokens is still the working path.
+
+## Legacy: Replit Reserved VM (no longer used)
+Originally published on Replit as a **Reserved VM**, not autoscale.
 
 ## Why VM (do not switch back to autoscale)
 The YouTube download flow is **stateful and asynchronous**:
