@@ -169,7 +169,10 @@ def _load_stereo(path, sr):
     if p.returncode != 0:
         raise RuntimeError('ffmpeg could not decode the audio: '
                            + p.stderr.decode('utf-8', 'replace')[-200:])
-    a = np.frombuffer(p.stdout, dtype=np.float32).reshape(-1, 2)
+    a = np.frombuffer(p.stdout, dtype=np.float32)
+    a = a[:(a.size // 2) * 2].reshape(-1, 2)      # trim any half-frame so reshape never fails
+    if a.shape[0] == 0:
+        raise RuntimeError('decoded audio is empty')
     return a[:, 0].copy(), a[:, 1].copy()
 
 
