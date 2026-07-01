@@ -84,11 +84,19 @@ def analyze_frequencies(audio_path):
 
 
 def main():
+    # argv: <in_audio> <out_json> [engine]   (engine defaults to the legacy melody)
     in_path, out_path = sys.argv[1], sys.argv[2]
+    engine = sys.argv[3] if len(sys.argv) > 3 else 'melody'
     try:
-        times, freqs = analyze_frequencies(in_path)
+        from engines import run_engine
+        result = run_engine(in_path, engine)         # {engine, sr, components:[...]}
+        # Back-compat: expose the first component as legacy top-level times/frequencies
+        # so the current single-spiral frontend keeps working until it's upgraded.
+        first = result['components'][0]
+        result['times'] = first['times']
+        result['frequencies'] = first['freqs']
         with open(out_path, 'w') as f:
-            json.dump({'times': times, 'frequencies': freqs}, f)
+            json.dump(result, f)
     except Exception as e:                                         # report, never traceback to user
         try:
             with open(out_path, 'w') as f:

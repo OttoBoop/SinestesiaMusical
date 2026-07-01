@@ -181,15 +181,21 @@ class AnalysisError(Exception):
     """Raised when the isolated analysis subprocess fails (timeout/OOM/decode)."""
 
 
-def analyze_frequencies(audio_path: str):
-    """Analyze ``audio_path`` in an isolated subprocess; return (times, freqs).
+VALID_ENGINES = {'melody', 'bands', 'hpss'}
 
-    The real DSP lives in analysis.py and runs as a separate, short-lived process
-    (see the note there). That sandboxes its memory and run time: a track too long
-    or heavy fails the child alone — this worker stays up and we raise an
-    ``AnalysisError`` mapped to a friendly message, instead of hanging at 85% or
-    crashing the instance.
+
+def run_analysis(audio_path: str, engine: str = 'melody') -> dict:
+    """Analyze ``audio_path`` with the chosen ENGINE in an isolated subprocess.
+
+    Returns the v2 result dict ``{engine, sr, components:[{name,times,freqs,energy}],
+    times, frequencies}`` (the last two are the first component, kept for the legacy
+    single-spiral frontend). The real DSP lives in analysis.py + engines.py and runs
+    as a separate, short-lived process: a track too long/heavy fails the child alone —
+    this worker stays up and we raise an ``AnalysisError`` mapped to a friendly message,
+    instead of hanging at 85% or crashing the instance.
     """
+    if engine not in VALID_ENGINES:
+        engine = 'melody'
     out_path = audio_path + '.analysis.json'
     try:
         os.remove(out_path)
@@ -198,7 +204,7 @@ def analyze_frequencies(audio_path: str):
 
     try:
         proc = subprocess.run(
-            [sys.executable, ANALYSIS_SCRIPT, audio_path, out_path],
+            [sys.executable, ANALYSIS_SCRIPT, audio_path, out_path, engine],
             capture_output=True, timeout=ANALYSIS_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
@@ -221,7 +227,7 @@ def analyze_frequencies(audio_path: str):
 
         if 'error' in data:
             raise AnalysisError(data['error'])
-        return data['times'], data['frequencies']
+        return data
     finally:
         try:
             os.remove(out_path)
@@ -300,16 +306,17 @@ def upload():
     save_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
     f.save(save_path)
 
+    engine = (request.form.get('engine') or 'melody').strip()
     try:
-        times, freqs = analyze_frequencies(save_path)
+        result = run_analysis(save_path, engine)
     except AnalysisError as e:
-        print(f'[upload] analysis failed for {f.filename!r} — {e}', flush=True)
+        print(f'[upload] analysis failed for {f.filename!r} (engine={engine}) — {e}', flush=True)
         return jsonify({'error': friendly_analysis_error(e)}), 500
     except Exception as e:
         print(f'[upload] unexpected error for {f.filename!r} — {e}', flush=True)
         return jsonify({'error': 'Something went wrong analyzing this file.'}), 500
 
-    return jsonify({'times': times, 'frequencies': freqs})
+    return jsonify(result)
 
 
 # ── YouTube search ────────────────────────────────────────────────────────────
@@ -357,6 +364,7 @@ def search_youtube():
 def youtube_download():
     data = request.get_json()
     url  = (data or {}).get('url', '').strip()
+    engine = ((data or {}).get('engine') or 'melody').strip()
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
     if not is_valid_youtube_url(url):
@@ -380,14 +388,13 @@ def youtube_download():
             mp3_path = base_path + '.mp3'
 
             set_progress(85)
-            times, freqs = analyze_frequencies(mp3_path)
+            result = run_analysis(mp3_path, engine)
 
             with download_lock:
                 download_jobs[job_id].update({
-                    'status':      'done',
-                    'progress':    100,
-                    'times':       times,
-                    'frequencies': freqs,
+                    'status':   'done',
+                    'progress': 100,
+                    **result,          # engine, sr, components[], + legacy times/frequencies
                 })
 
         except AnalysisError as e:
