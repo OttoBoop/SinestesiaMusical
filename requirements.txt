@@ -142,3 +142,4 @@ werkzeug==3.1.8
     # via flask
 yt-dlp==2026.6.9
     # via repl-nix-workspace
+boto3==1.35.99  # S3/R2 shared analysis cache (lazy import, only when CACHE_S3_* set)

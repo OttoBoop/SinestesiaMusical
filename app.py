@@ -195,14 +195,18 @@ class AnalysisError(Exception):
     """Raised when the isolated analysis subprocess fails (timeout/OOM/decode)."""
 
 
+class AnalysisQueued(Exception):
+    """Raised when an ML result isn't cached yet and must be precomputed off-tier."""
+
+
 import cache
 
-VALID_ENGINES = {'melody', 'bands', 'hpss', 'repet', 'stereo'}
-# The ML engine (ONNX MDX) needs ~1.8 GB / ~1x realtime (measured, Phase 0) — too heavy to
-# run inline on the 512 MB free tier. It stays OFF unless ENABLE_ML=1 (a bigger instance or a
-# precompute/one-off-Job worker); the cache below then serves precomputed ML results cheaply.
-if os.environ.get('ENABLE_ML') == '1':
-    VALID_ENGINES.add('ml')
+# The ML engine is a VALID choice, but on the free web tier it is served from the shared
+# cache ONLY — never computed inline (it needs ~1.8 GB / ~1x realtime, measured Phase 0, and
+# would OOM the 512 MB instance). A precompute worker (precompute.py) populates the cache.
+# Set ENABLE_ML=1 on a bigger instance to also allow inline ML computation there.
+VALID_ENGINES = {'melody', 'bands', 'hpss', 'repet', 'stereo', 'ml'}
+INLINE_ML = os.environ.get('ENABLE_ML') == '1'
 
 
 def run_analysis(audio_path: str, engine: str = 'melody', source_id: str = None) -> dict:
@@ -227,6 +231,13 @@ def run_analysis(audio_path: str, engine: str = 'melody', source_id: str = None)
         cached = cache.get(key)
         if cached is not None:
             return cached
+
+    # ML is precomputed off-tier and served from cache only — never run inline on the free
+    # web worker (it would OOM). A cache miss means "not prepared yet".
+    if engine == 'ml' and not INLINE_ML:
+        raise AnalysisQueued(
+            "HD vocal separation isn't ready for this track yet — it's prepared in the "
+            "background. Try again in a bit, or use the Vocal/Harmonic engines meanwhile.")
 
     out_path = audio_path + '.analysis.json'
     try:
@@ -348,6 +359,10 @@ def upload():
         sid = None
     try:
         result = run_analysis(save_path, engine, source_id=sid)
+    except AnalysisQueued as e:
+        # ML on an uploaded file can't be precomputed by video id — tell the user plainly.
+        return jsonify({'error': 'HD (ML) separation is only available for YouTube tracks '
+                                 'right now. Try another engine for uploaded files.'}), 200
     except AnalysisError as e:
         print(f'[upload] analysis failed for {f.filename!r} (engine={engine}) — {e}', flush=True)
         return jsonify({'error': friendly_analysis_error(e)}), 500
@@ -422,12 +437,25 @@ def youtube_download():
 
         cleanup_downloads()
 
+        sid = youtube_video_id(url)
+        # ML is cache-only on the web tier: serve a precomputed result, else say it's being
+        # prepared — WITHOUT downloading + separating inline (that would OOM the free tier).
+        if engine == 'ml' and not INLINE_ML:
+            cached = cache.get(cache.analysis_key(sid, 'ml')) if sid else None
+            with download_lock:
+                if cached is not None:
+                    download_jobs[job_id].update({'status': 'done', 'progress': 100, **cached})
+                else:
+                    download_jobs[job_id].update({'status': 'error', 'error': (
+                        "HD vocal separation isn't ready for this track yet — it's prepared in "
+                        "the background. Try again shortly, or use the Vocal/Harmonic engine.")})
+            return
+
         try:
             download_via_ytdlp(url, base_path, set_progress)
             mp3_path = base_path + '.mp3'
 
             set_progress(85)
-            sid = youtube_video_id(url)
             result = run_analysis(mp3_path, engine, source_id=sid)
 
             with download_lock:
@@ -436,6 +464,11 @@ def youtube_download():
                     'progress': 100,
                     **result,          # engine, sr, components[], + legacy times/frequencies
                 })
+
+        except AnalysisQueued as e:
+            cleanup_downloads()
+            with download_lock:
+                download_jobs[job_id].update({'status': 'error', 'error': str(e)})
 
         except AnalysisError as e:
             # Download succeeded but analysis failed — not a YouTube problem.
