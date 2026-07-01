@@ -382,6 +382,33 @@
             </div>
         </div>
 
+        <style>
+        .engine-bar{display:none;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:12px 0}
+        .engine-bar.visible{display:flex}
+        .engine-bar .lbl{font-size:.8rem;color:#8888bb}
+        .seg{display:inline-flex;border:1px solid #33335a;border-radius:8px;overflow:hidden}
+        .seg-btn{background:#16162a;color:#bbb;border:none;padding:6px 12px;font-size:.82rem;cursor:pointer;transition:background .15s}
+        .seg-btn:not(:last-child){border-right:1px solid #33335a}
+        .seg-btn:hover{background:#20203a}
+        .seg-btn.active{background:#3a3a6a;color:#fff}
+        .view-toggle{background:#16162a;color:#bbb;border:1px solid #33335a;border-radius:8px;padding:6px 12px;font-size:.82rem;cursor:pointer}
+        .view-toggle.on{background:#2a6a4a;color:#fff;border-color:#2a6a4a}
+        .legend{display:flex;flex-wrap:wrap;gap:8px;width:100%;justify-content:center}
+        .legend .chip{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;color:#ccc;cursor:pointer;padding:3px 9px;border-radius:6px;border:1px solid transparent}
+        .legend .chip.focused{border-color:#5a5a9a;background:#1c1c34}
+        .legend .dot{width:11px;height:11px;border-radius:50%;box-shadow:0 0 6px currentColor}
+        </style>
+        <div class="engine-bar" id="engine-bar">
+            <span class="lbl">Separation:</span>
+            <div class="seg" id="engine-group">
+                <button class="seg-btn active" data-engine="melody">Melody</button>
+                <button class="seg-btn" data-engine="bands">Bands</button>
+                <button class="seg-btn" data-engine="hpss">Harmonic / Perc</button>
+            </div>
+            <button class="view-toggle" id="view-toggle">Spirals: single</button>
+            <div class="legend" id="legend"></div>
+        </div>
+
         <div class="controls hidden" id="controls">
             <div class="freq-info">
                 <div>
@@ -471,94 +498,89 @@ function freqToNote(freq) {
 const canvas = document.getElementById('spiral-canvas');
 const ctx    = canvas.getContext('2d');
 
-function drawSpiral(freq) {
-    const W  = canvas.width;
-    const H  = canvas.height;
-    const cx = W / 2;
-    const cy = H / 2;
-    const margin = 18;
-    const scale  = (Math.min(W, H) / 2 - margin) / SPIRAL_R_MAX;
+// Colour from frequency: log-frequency → hue (octaves wrap the wheel), i.e. pitch-class.
+// hue_deg = (360*log2(f/fref)) % 360  →  hue01 = frac(log2(f/fref)). fref = 55 Hz (A1).
+function hueFromFreq(freq) {
+    if (freq <= 1) return 0;
+    const x = Math.log2(freq / 55);
+    return x - Math.floor(x);           // 0..1
+}
 
-    // Background
+// Radius from frequency: log map over ~6 octaves (55–3520 Hz) so bass, melody and bright
+// percussive components all use a good slice of the spiral instead of clamping to the edge.
+const R_LO_HZ = 55, R_HI_HZ = 3520;
+const _R_LOG_SPAN = Math.log2(R_HI_HZ / R_LO_HZ);
+function radiusFromFreq(freq) {
+    const f = Math.min(Math.max(freq, R_LO_HZ), R_HI_HZ);
+    const frac = Math.log2(f / R_LO_HZ) / _R_LOG_SPAN;
+    return SPIRAL_A + frac * (SPIRAL_R_MAX - SPIRAL_A);
+}
+
+function _scale() {
+    return (Math.min(canvas.width, canvas.height) / 2 - 18) / SPIRAL_R_MAX;
+}
+
+// Background + faint full guide spiral — drawn ONCE per frame, before the layers.
+function clearCanvas() {
+    const W = canvas.width, H = canvas.height, cx = W / 2, cy = H / 2, scale = _scale();
     ctx.fillStyle = BG;
     ctx.fillRect(0, 0, W, H);
-
-    // Clamp radius
-    const radius = Math.max(SPIRAL_A, Math.min(freq, SPIRAL_R_MAX));
-
-    // Find last index where r <= radius
-    let coloredEnd = 0;
-    for (let i = 0; i <= N_SPIRAL_PTS; i++) {
-        if (_R[i] <= radius) coloredEnd = i;
-        else break;
-    }
-
-    // Polar → canvas Cartesian (rotate so phi=0 points up)
-    function toXY(phi, r) {
-        return [
-            cx + scale * r * Math.sin(phi),
-            cy - scale * r * Math.cos(phi),
-        ];
-    }
-
-    // ── Faint guide spiral (full) ──
     ctx.beginPath();
     for (let i = 0; i <= N_SPIRAL_PTS; i++) {
-        const [x, y] = toXY(_PHI[i], _R[i]);
-        if (i === 0) ctx.moveTo(x, y);
-        else         ctx.lineTo(x, y);
+        const x = cx + scale * _R[i] * Math.sin(_PHI[i]);
+        const y = cy - scale * _R[i] * Math.cos(_PHI[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth   = 1.0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1.0;
     ctx.stroke();
+}
 
+// Draw ONE component's spiral (no clear). freq → radius+hue; energy → opacity/thickness.
+// filled=true  → the classic solid wedge (used for the single/focused spiral).
+// filled=false → a glowing spiral ARM (stroke) that layers legibly without occluding the
+//                others (solid wedges overlap into one blob — verified — so 'all' uses arms).
+// rot rotates each layer a little so overlapping arms stay distinct.
+function drawSpiralLayer(freq, energy, rot, filled) {
+    const cx = canvas.width / 2, cy = canvas.height / 2, scale = _scale();
+    const radius = radiusFromFreq(freq);
+    let coloredEnd = 0;
+    for (let i = 0; i <= N_SPIRAL_PTS; i++) { if (_R[i] <= radius) coloredEnd = i; else break; }
     if (coloredEnd < 2) return;
 
-    // ── Colored fill: trace outer edge, close to centre ──
-    // Use two layers for glow effect
-    const phiLast    = _PHI[coloredEnd];
-    const finalAngle = phiLast % (2 * Math.PI);
-    const hue        = finalAngle / (2 * Math.PI);
-    const [r, g, b]  = hsvToRgb(hue, 1, 1);
-    const fillColor  = `rgba(${r},${g},${b},0.82)`;
-    const glowColor  = `rgba(${r},${g},${b},0.18)`;
+    const toXY = (phi, r) => [cx + scale * r * Math.sin(phi + rot), cy - scale * r * Math.cos(phi + rot)];
+    const [r, g, b] = hsvToRgb(hueFromFreq(freq), 1, 1);
+    const e = Math.max(0, Math.min(1, energy));
 
-    // Main fill
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    for (let i = 0; i <= coloredEnd; i++) {
-        const [x, y] = toXY(_PHI[i], _R[i]);
-        ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = fillColor;
-    ctx.fill();
-
-    // Soft glow on top (larger, more transparent)
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    for (let i = 0; i <= coloredEnd; i++) {
-        const [x, y] = toXY(_PHI[i], _R[i]);
-        ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = glowColor;
-    ctx.shadowColor  = `rgb(${r},${g},${b})`;
-    ctx.shadowBlur   = 22;
-    ctx.fill();
-    ctx.shadowBlur   = 0;
-
-    // Bright leading edge stroke
-    if (coloredEnd > 0) {
+    if (filled) {
         ctx.beginPath();
-        const [x0, y0] = toXY(_PHI[coloredEnd - 1], _R[coloredEnd - 1]);
-        const [x1, y1] = toXY(_PHI[coloredEnd],     _R[coloredEnd]);
-        ctx.moveTo(x0, y0);
-        ctx.lineTo(x1, y1);
-        ctx.strokeStyle = `rgba(${r},${g},${b},1)`;
-        ctx.lineWidth   = 2.5;
+        ctx.moveTo(cx, cy);
+        for (let i = 0; i <= coloredEnd; i++) { const [x, y] = toXY(_PHI[i], _R[i]); ctx.lineTo(x, y); }
+        ctx.closePath();
+        ctx.fillStyle = `rgba(${r},${g},${b},${(0.55 + 0.30 * e).toFixed(3)})`;
+        ctx.shadowColor = `rgb(${r},${g},${b})`;
+        ctx.shadowBlur = 22;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    } else {
+        ctx.beginPath();
+        for (let i = 0; i <= coloredEnd; i++) { const [x, y] = toXY(_PHI[i], _R[i]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+        ctx.strokeStyle = `rgba(${r},${g},${b},${(0.45 + 0.5 * e).toFixed(3)})`;
+        ctx.lineWidth = 3 + 7 * e;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.shadowColor = `rgb(${r},${g},${b})`;
+        ctx.shadowBlur = 14;
         ctx.stroke();
+        ctx.shadowBlur = 0;
     }
+
+    // bright leading tip
+    const [x0, y0] = toXY(_PHI[coloredEnd - 1], _R[coloredEnd - 1]);
+    const [x1, y1] = toXY(_PHI[coloredEnd], _R[coloredEnd]);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+    ctx.strokeStyle = `rgba(${r},${g},${b},1)`;
+    ctx.lineWidth = 3;
+    ctx.stroke();
 }
 
 // Draw a static dark placeholder on load
@@ -597,33 +619,64 @@ const dlProgressFill = document.getElementById('dl-progress-fill');
 const dlProgressLabel= document.getElementById('dl-progress-label');
 const placeholder    = document.getElementById('spiral-placeholder');
 const retryBtn       = document.getElementById('retry-btn');
+const engineBar      = document.getElementById('engine-bar');
+const legendEl       = document.getElementById('legend');
+const viewToggleBtn  = document.getElementById('view-toggle');
 
-let freqTimes = [];
-let freqValues = [];
+// Engine selector → re-analyze the current source with the chosen separation engine
+document.querySelectorAll('#engine-group .seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (btn.classList.contains('active')) return;
+        document.querySelectorAll('#engine-group .seg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentEngine = btn.dataset.engine;
+        reanalyze();
+    });
+});
+
+// Single ↔ all spirals toggle
+viewToggleBtn.addEventListener('click', () => {
+    viewMode = (viewMode === 'all') ? 'single' : 'all';
+    updateViewToggle(); renderLegend();
+});
+function updateViewToggle() {
+    const multi = components.length > 1;
+    viewToggleBtn.style.display = multi ? '' : 'none';
+    viewToggleBtn.classList.toggle('on', viewMode === 'all' && multi);
+    viewToggleBtn.textContent = 'Spirals: ' + (viewMode === 'all' && multi ? 'all' : 'single');
+}
+
+function reanalyze() {
+    if (!lastSource) return;
+    if (lastSource.type === 'file') handleFile(lastSource.file);
+    else loadYouTubeUrl(lastSource.url, lastSource.title);
+}
+
+let components = [];        // [{name, times, freqs, energy}] — one per spiral
+let currentEngine = 'melody';
+let viewMode = 'all';       // 'single' | 'all'
+let focusedIndex = 0;
 let animId = null;
+let lastSource = null;      // {type:'file',file} | {type:'yt',url,title}
 let lastYtUrl = null;
 let lastYtTitle = null;
 
-retryBtn.addEventListener('click', () => {
-    if (lastYtUrl) loadYouTubeUrl(lastYtUrl, lastYtTitle);
-});
+retryBtn.addEventListener('click', () => { if (lastSource) reanalyze(); });
 
-// Interpolate frequency at playback time
-function freqAtTime(t) {
-    if (!freqTimes.length) return SPIRAL_A;
-    let lo = 0, hi = freqTimes.length - 1;
-    while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (freqTimes[mid] <= t) lo = mid; else hi = mid - 1;
+// Sample one component's series at playback time t → {freq, energy} (binary search + lerp).
+function sampleSeries(s, t) {
+    const T = s.times;
+    if (!T || !T.length) return { freq: SPIRAL_A, energy: 0 };
+    let lo = 0, hi = T.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (T[mid] <= t) lo = mid; else hi = mid - 1; }
+    if (lo < T.length - 1) {
+        const frac = (t - T[lo]) / (T[lo + 1] - T[lo] + 1e-9);
+        return {
+            freq:   s.freqs[lo]  + (s.freqs[lo + 1]  - s.freqs[lo])  * frac,
+            energy: s.energy[lo] + (s.energy[lo + 1] - s.energy[lo]) * frac,
+        };
     }
-    // Linear interpolation to neighbour frame
-    if (lo < freqTimes.length - 1) {
-        const t0 = freqTimes[lo],  t1 = freqTimes[lo + 1];
-        const f0 = freqValues[lo], f1 = freqValues[lo + 1];
-        const frac = (t - t0) / (t1 - t0 + 1e-9);
-        return f0 + (f1 - f0) * frac;
-    }
-    return freqValues[lo];
+    return { freq: s.freqs[lo], energy: s.energy[lo] };
 }
 
 function setStatus(state, text) {
@@ -647,20 +700,53 @@ function showDlProgress(visible, pct = 0, label = 'Downloading…') {
 }
 
 function applyFrequencyData(data) {
-    freqTimes  = data.times;
-    freqValues = data.frequencies;
+    // v2: components[]; fall back to a single component from legacy times/frequencies.
+    if (data.components && data.components.length) {
+        components = data.components.map(c => ({
+            name: c.name, times: c.times, freqs: c.freqs,
+            energy: (c.energy && c.energy.length) ? c.energy : c.freqs.map(() => 1),
+        }));
+    } else {
+        components = [{ name: 'melody', times: data.times, freqs: data.frequencies,
+                        energy: (data.frequencies || []).map(() => 1) }];
+    }
+    focusedIndex = 0;
+    viewMode = components.length > 1 ? 'all' : 'single';
+    updateViewToggle();
+    renderLegend();
+    updateStats();
 
-    const freqs = freqValues;
-    document.getElementById('min-freq').textContent = Math.round(Math.min(...freqs)) + ' Hz';
-    document.getElementById('avg-freq').textContent = Math.round(freqs.reduce((a,b)=>a+b,0)/freqs.length) + ' Hz';
-    document.getElementById('max-freq').textContent = Math.round(Math.max(...freqs)) + ' Hz';
-
+    engineBar.classList.add('visible');
     controls.classList.remove('hidden');
     infoGrid.classList.remove('hidden');
     placeholder.style.display = 'none';
     showDlProgress(false);
     setStatus('ready', 'Ready — press play to start the spiral animation');
     startAnimation();
+}
+
+function updateStats() {
+    const s = components[focusedIndex] || components[0];
+    if (!s) return;
+    const f = s.freqs;
+    document.getElementById('min-freq').textContent = Math.round(Math.min(...f)) + ' Hz';
+    document.getElementById('avg-freq').textContent = Math.round(f.reduce((a,b)=>a+b,0)/f.length) + ' Hz';
+    document.getElementById('max-freq').textContent = Math.round(Math.max(...f)) + ' Hz';
+}
+
+function renderLegend() {
+    legendEl.innerHTML = '';
+    if (components.length < 2) return;   // no legend for a single spiral
+    components.forEach((c, i) => {
+        const mean = c.freqs.reduce((a, b) => a + b, 0) / c.freqs.length;
+        const [r, g, b] = hsvToRgb(hueFromFreq(mean), 1, 1);
+        const chip = document.createElement('div');
+        chip.className = 'chip' + (i === focusedIndex ? ' focused' : '');
+        chip.innerHTML = `<span class="dot" style="background:rgb(${r},${g},${b})"></span>${c.name}`;
+        chip.title = viewMode === 'single' ? 'Show this spiral' : 'Focus this spiral';
+        chip.addEventListener('click', () => { focusedIndex = i; renderLegend(); updateStats(); });
+        legendEl.appendChild(chip);
+    });
 }
 
 // ─────────────────────────────────────────────
@@ -675,20 +761,30 @@ function startAnimation() {
     function frame() {
         const t   = audioPlayer.currentTime;
         const dur = audioPlayer.duration || 1;
-
         progressFill.style.width = (t / dur * 100) + '%';
         timeDisplay.textContent  = formatTime(t) + ' / ' + formatTime(dur);
 
-        const freq = freqAtTime(t);
-        freqDisplay.textContent = Math.round(freq);
-        noteDisplay.textContent = freqToNote(freq);
-
-        drawSpiral(freq);
-
-        if (!audioPlayer.paused && !audioPlayer.ended) {
-            setStatus('playing', 'Playing — spiral tracking current frequency');
+        clearCanvas();
+        const n = components.length;
+        if (n) {
+            if (viewMode === 'all' && n > 1) {
+                for (let i = 0; i < n; i++) {
+                    const { freq, energy } = sampleSeries(components[i], t);
+                    drawSpiralLayer(freq, energy, i * (2 * Math.PI / n) * 0.5, false);
+                }
+            } else {
+                const s = components[focusedIndex] || components[0];
+                const { freq, energy } = sampleSeries(s, t);
+                drawSpiralLayer(freq, energy, 0, true);
+            }
+            const { freq } = sampleSeries(components[focusedIndex] || components[0], t);
+            freqDisplay.textContent = Math.round(freq);
+            noteDisplay.textContent = freqToNote(freq);
         }
 
+        if (!audioPlayer.paused && !audioPlayer.ended) {
+            setStatus('playing', 'Playing — spiral tracking frequencies');
+        }
         animId = requestAnimationFrame(frame);
     }
     animId = requestAnimationFrame(frame);
@@ -725,13 +821,15 @@ dropZone.addEventListener('drop', e => {
 audioInput.addEventListener('change', () => { if (audioInput.files[0]) handleFile(audioInput.files[0]); });
 
 async function handleFile(file) {
+    lastSource = { type: 'file', file };
     fileNameEl.textContent = file.name;
     retryBtn.classList.add('hidden');
-    setStatus('analyzing', 'Analyzing audio with HPS frequency tracking…');
+    setStatus('analyzing', `Analyzing audio (${currentEngine})…`);
     stopAnimation();
 
     const formData = new FormData();
     formData.append('audio', file);
+    formData.append('engine', currentEngine);
     try {
         const res  = await fetch('/upload', { method: 'POST', body: formData });
         const data = await res.json();
@@ -808,6 +906,7 @@ ytLinkBtn.addEventListener('click', () => { const u = ytLinkInput.value.trim(); 
 ytLinkInput.addEventListener('keydown', e => { if (e.key === 'Enter') { const u = ytLinkInput.value.trim(); if (u) loadYouTubeUrl(u); } });
 
 async function loadYouTubeUrl(url, title) {
+    lastSource  = { type: 'yt', url, title };
     lastYtUrl   = url;
     lastYtTitle = title;
     retryBtn.classList.add('hidden');
@@ -818,7 +917,7 @@ async function loadYouTubeUrl(url, title) {
         const res  = await fetch('/youtube-download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
+            body: JSON.stringify({ url, engine: currentEngine }),
         });
         const data = await res.json();
         if (data.error) { failDownload(data.error); return; }
