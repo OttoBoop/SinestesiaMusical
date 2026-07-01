@@ -68,12 +68,16 @@ def _s3_client():
     global _s3
     if _s3 is None:
         import boto3  # lazy: only required when S3 is configured
+        from botocore.config import Config
+        # Path-style + SigV4 are REQUIRED by Supabase Storage's S3 endpoint (and work fine
+        # for Cloudflare R2 / AWS S3 too), so this backend is portable across all of them.
         _s3 = boto3.client(
             's3',
             endpoint_url=S3_ENDPOINT,
             aws_access_key_id=os.environ.get('CACHE_S3_KEY'),
             aws_secret_access_key=os.environ.get('CACHE_S3_SECRET'),
             region_name=os.environ.get('CACHE_S3_REGION', 'auto'),
+            config=Config(signature_version='s3v4', s3={'addressing_style': 'path'}),
         )
     return _s3
 
