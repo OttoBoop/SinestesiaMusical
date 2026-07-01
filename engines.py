@@ -17,6 +17,7 @@ tens of MB even for long songs, cheap enough to hold — unlike the old 44.1 kHz
 path that OOM'd. HPSS/bands read from it; the melody engine reuses the shipped
 memory-bounded `analyze_frequencies` verbatim (keeps the verified single-spiral output).
 """
+import os
 import numpy as np
 import scipy.signal
 import scipy.ndimage
@@ -218,12 +219,36 @@ def engine_stereo(path):
     ]
 
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+MDX_MODEL_PATH = os.environ.get('MDX_MODEL_PATH') or os.path.join(
+    _HERE, 'models', 'UVR-MDX-NET-Inst_HQ_3.onnx')
+
+
+def engine_ml(path):
+    """HD ML separation (self-hosted ONNX MDX-Net, torch-free): vocals vs instrumental.
+
+    Heavy (~1.8 GB / ~1× realtime — measured) so it is NOT exposed inline on the free web
+    tier; it runs via the precompute/one-off-Job + cache path. Raises a clean error if the
+    model isn't present so the caller maps it to a friendly message."""
+    import mdx
+    if not os.path.exists(MDX_MODEL_PATH):
+        raise RuntimeError('ML separation model not available on this server')
+    vocals, instrumental = mdx.separate(path, MDX_MODEL_PATH, target_sr=ANALYSIS_SR)
+    vmag, freqs = _full_mag(vocals)
+    imag, _ = _full_mag(instrumental)
+    return [
+        _component('vocals', vmag, freqs, _hps_pitch(vmag, freqs)),
+        _component('instrumental', imag, freqs, _hps_pitch(imag, freqs)),
+    ]
+
+
 ENGINES = {
     'melody': engine_melody,   # default, back-compat single spiral
     'bands':  engine_bands,
     'hpss':   engine_hpss,
     'repet':  engine_repet,    # REPET-SIM: vocal vs repeating background
     'stereo': engine_stereo,   # stereo center (vocal) vs sides
+    'ml':     engine_ml,       # HD ONNX MDX: vocals vs instrumental (precompute+cache path)
 }
 
 

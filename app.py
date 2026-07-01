@@ -1,14 +1,28 @@
 import os
 import glob
+import hashlib
 import json
 import shutil
 import sys
 import tempfile
 import threading
 import subprocess
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import yt_dlp
+
+
+def youtube_video_id(url: str):
+    """Extract the YouTube video id from a URL, for use as a cache source id."""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return None
+    host = (p.hostname or '').lower()
+    if 'youtu.be' in host:
+        return (p.path.lstrip('/').split('/')[0] or None)
+    vid = parse_qs(p.query).get('v', [None])[0]
+    return vid or None
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
@@ -181,10 +195,17 @@ class AnalysisError(Exception):
     """Raised when the isolated analysis subprocess fails (timeout/OOM/decode)."""
 
 
+import cache
+
 VALID_ENGINES = {'melody', 'bands', 'hpss', 'repet', 'stereo'}
+# The ML engine (ONNX MDX) needs ~1.8 GB / ~1x realtime (measured, Phase 0) — too heavy to
+# run inline on the 512 MB free tier. It stays OFF unless ENABLE_ML=1 (a bigger instance or a
+# precompute/one-off-Job worker); the cache below then serves precomputed ML results cheaply.
+if os.environ.get('ENABLE_ML') == '1':
+    VALID_ENGINES.add('ml')
 
 
-def run_analysis(audio_path: str, engine: str = 'melody') -> dict:
+def run_analysis(audio_path: str, engine: str = 'melody', source_id: str = None) -> dict:
     """Analyze ``audio_path`` with the chosen ENGINE in an isolated subprocess.
 
     Returns the v2 result dict ``{engine, sr, components:[{name,times,freqs,energy}],
@@ -193,9 +214,20 @@ def run_analysis(audio_path: str, engine: str = 'melody') -> dict:
     as a separate, short-lived process: a track too long/heavy fails the child alone —
     this worker stays up and we raise an ``AnalysisError`` mapped to a friendly message,
     instead of hanging at 85% or crashing the instance.
+
+    When ``source_id`` is given (YouTube video id, or an uploaded file's content hash) the
+    derived analysis is cached by (source_id, engine) — a repeat request is served instantly
+    and, for the heavy ML engine, a precomputed result can be served without recomputing.
     """
     if engine not in VALID_ENGINES:
         engine = 'melody'
+
+    key = cache.analysis_key(source_id, engine) if source_id else None
+    if key:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
     out_path = audio_path + '.analysis.json'
     try:
         os.remove(out_path)
@@ -227,6 +259,8 @@ def run_analysis(audio_path: str, engine: str = 'melody') -> dict:
 
         if 'error' in data:
             raise AnalysisError(data['error'])
+        if key:
+            cache.put(key, data)
         return data
     finally:
         try:
@@ -308,7 +342,12 @@ def upload():
 
     engine = (request.form.get('engine') or 'melody').strip()
     try:
-        result = run_analysis(save_path, engine)
+        with open(save_path, 'rb') as fh:
+            sid = 'file:' + hashlib.sha256(fh.read()).hexdigest()[:16]
+    except OSError:
+        sid = None
+    try:
+        result = run_analysis(save_path, engine, source_id=sid)
     except AnalysisError as e:
         print(f'[upload] analysis failed for {f.filename!r} (engine={engine}) — {e}', flush=True)
         return jsonify({'error': friendly_analysis_error(e)}), 500
@@ -388,7 +427,8 @@ def youtube_download():
             mp3_path = base_path + '.mp3'
 
             set_progress(85)
-            result = run_analysis(mp3_path, engine)
+            sid = youtube_video_id(url)
+            result = run_analysis(mp3_path, engine, source_id=sid)
 
             with download_lock:
                 download_jobs[job_id].update({
