@@ -159,10 +159,71 @@ def engine_hpss(path, beta=2.0):
     ]
 
 
+def _load_stereo(path, sr):
+    """Decode → stereo → resample via ffmpeg; returns (L, R) float32 arrays."""
+    import subprocess
+    cmd = ['ffmpeg', '-nostdin', '-loglevel', 'error', '-i', path,
+           '-ac', '2', '-ar', str(sr), '-f', 'f32le', '-']
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        raise RuntimeError('ffmpeg could not decode the audio: '
+                           + p.stderr.decode('utf-8', 'replace')[-200:])
+    a = np.frombuffer(p.stdout, dtype=np.float32).reshape(-1, 2)
+    return a[:, 0].copy(), a[:, 1].copy()
+
+
+def engine_repet(path, k=100, min_dist_s=1.0):
+    """REPET-SIM: separate a repeating musical background from a non-repeating vocal.
+
+    The repeating model W is, per frame, the median of that frame's k most-similar frames
+    (cosine similarity). The self-similarity is computed in row BLOCKS so the full T×T matrix
+    is never materialised. Background mask M = min(W,V)/V; vocal = (1−M)·V. Magnitude only
+    (no resynthesis — we just read pitch+energy per component).
+    """
+    y = _load_mono(path, ANALYSIS_SR)
+    V, freqs = _full_mag(y)                       # (n_bins, T)
+    T = V.shape[1]
+    Vn = (V / (np.linalg.norm(V, axis=0) + 1e-9)).astype(np.float32)   # unit-norm columns
+    W = np.empty_like(V)
+    kk = min(k, T)
+    for s in range(0, T, 256):
+        e = min(s + 256, T)
+        sims = Vn[:, s:e].T @ Vn                  # (blk, T) cosine similarities
+        for jj in range(e - s):
+            idx = np.argpartition(sims[jj], -kk)[-kk:]     # k most-similar frames, O(T)
+            W[:, s + jj] = np.median(V[:, idx], axis=1)
+    del Vn
+    M = np.minimum(W, V) / (V + 1e-9)             # background mask in [0,1]
+    voice = (1.0 - M) * V
+    bg = M * V
+    del W, M
+    voice[:int(np.searchsorted(freqs, 100.0)), :] = 0.0   # vocals rarely below 100 Hz
+    return [
+        _component('vocal', voice, freqs, _hps_pitch(voice, freqs)),
+        _component('background', bg, freqs, _hps_pitch(bg, freqs)),
+    ]
+
+
+def engine_stereo(path):
+    """Stereo center/side split. center = max(0, |mid| − |side|) isolates content panned to
+    the middle (usually vocals/bass/kick); sides = |L−R| is the hard-panned rest."""
+    L, R = _load_stereo(path, ANALYSIS_SR)
+    n = min(len(L), len(R))
+    mid_mag, freqs = _full_mag((L[:n] + R[:n]) * 0.5)
+    side_mag, _ = _full_mag((L[:n] - R[:n]) * 0.5)
+    center = np.maximum(0.0, mid_mag - side_mag).astype(np.float32)
+    return [
+        _component('center', center, freqs, _hps_pitch(center, freqs)),
+        _component('sides', side_mag, freqs, _centroid_pitch(side_mag, freqs, FMIN, 8000.0)),
+    ]
+
+
 ENGINES = {
     'melody': engine_melody,   # default, back-compat single spiral
     'bands':  engine_bands,
     'hpss':   engine_hpss,
+    'repet':  engine_repet,    # REPET-SIM: vocal vs repeating background
+    'stereo': engine_stereo,   # stereo center (vocal) vs sides
 }
 
 

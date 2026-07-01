@@ -181,7 +181,7 @@ class AnalysisError(Exception):
     """Raised when the isolated analysis subprocess fails (timeout/OOM/decode)."""
 
 
-VALID_ENGINES = {'melody', 'bands', 'hpss'}
+VALID_ENGINES = {'melody', 'bands', 'hpss', 'repet', 'stereo'}
 
 
 def run_analysis(audio_path: str, engine: str = 'melody') -> dict:
