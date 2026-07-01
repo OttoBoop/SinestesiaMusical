@@ -111,3 +111,24 @@ proxies. Source: https://www.izotope.com/en/learn/eq-cheat-sheet
 - **Cloudflare R2**: 10 GB free, **zero egress**. Key = `{video_id}/{engine}/{model_version}/{params_hash}`.
 - Render **one-off Jobs** bill per-second (~$0.01–0.02/song CPU) if separation is offloaded.
 - https://developers.cloudflare.com/r2/pricing/ · https://render.com/docs/jobs
+
+---
+
+## Phase 0 — MEASURED results (2026-06-30, this machine, torch-free numpy+onnxruntime)
+Model **UVR-MDX-NET-Inst_HQ_3.onnx** (dim_f=3072, n_fft=6144), 3.5-min song, processed
+chunk-by-chunk (37 chunks). Runner: `mdx_np.py` (numpy STFT/iSTFT, no torch, no librosa).
+
+| Config | Wall time | vs realtime | peak RSS |
+|---|---|---|---|
+| 1 thread, onnxruntime arena ON | 559 s | 2.62× | **3028 MB** |
+| 4 threads, arena OFF | 230 s | 1.08× | **1824 MB** |
+
+**Conclusion / decision gate:** self-hosted ONNX MDX needs **~1.8 GB RAM minimum** (arena
+off) and is slow (~1× realtime even on 4 fast desktop threads → several minutes on Render's
+1–2 vCPU). It **cannot run inline on the 512 MB free tier**, and is tight even on Standard
+(2 GB). Therefore the ML engine must be **precompute + cache** (run separation out-of-band —
+a Render one-off Job on a 4 GB instance, or a local/offline batch — then cache the ~1 MB
+per-stem analysis keyed by video id; the web app stays on free tier). The **classical
+engines (bands/HPSS/REPET/stereo) DO run inline** in the existing analysis subprocess and
+ship first. onnxruntime's default CPU **memory arena roughly doubles peak RSS — disable it**
+(`SessionOptions.enable_cpu_mem_arena=False`) for the separation worker.
