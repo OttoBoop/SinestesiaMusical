@@ -8,6 +8,7 @@ NOTE (measured, Phase 0): this needs ~1.8 GB peak RAM and ~1× realtime even on 
 CPU threads — it CANNOT run inline on the 512 MB free web tier. It's meant for a
 precompute/one-off-Job path with the result cached (see docs/visualizer-v2-research.md).
 """
+import os
 import math
 import subprocess
 import numpy as np
