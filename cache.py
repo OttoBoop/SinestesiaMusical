@@ -112,3 +112,41 @@ def get(key: str):
 def put(key: str, result: dict) -> None:
     """Store a result dict (best-effort)."""
     (_s3_put if backend_kind() == 's3' else _local_put)(key, result)
+
+
+# ── raw blobs (e.g. the precomputed audio for HD tracks) ─────────────────────────
+# `name` is an object path like 'audio/<video_id>.mp3' (used verbatim, not hashed) so the
+# worker and the web app agree on it. Lets an HD track carry its audio alongside its
+# analysis, so the site plays it from the shared cache instead of re-downloading.
+def put_bytes(name: str, data: bytes, content_type: str = 'application/octet-stream') -> None:
+    if backend_kind() == 's3':
+        try:
+            _s3_client().put_object(Bucket=S3_BUCKET, Key=name, Body=data, ContentType=content_type)
+        except Exception:
+            pass
+    else:
+        try:
+            path = os.path.join(CACHE_DIR, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'wb') as f:
+                f.write(data)
+        except OSError:
+            pass
+
+
+def get_bytes(name: str):
+    """Return raw bytes for an object path, or None if absent."""
+    if backend_kind() == 's3':
+        try:
+            return _s3_client().get_object(Bucket=S3_BUCKET, Key=name)['Body'].read()
+        except Exception:
+            return None
+    try:
+        with open(os.path.join(CACHE_DIR, name), 'rb') as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def audio_name(video_id: str) -> str:
+    return f'audio/{video_id}.mp3'

@@ -947,7 +947,11 @@ function pollJob(jobId, title) {
             } else if (data.status === 'done') {
                 clearInterval(iv);
                 retryBtn.classList.add('hidden');
-                audioPlayer.src = '/audio/audio.mp3?t=' + Date.now();
+                // HD tracks carry their audio in the shared cache (audioUrl); others use the
+                // just-downloaded audio.mp3 on the instance.
+                audioPlayer.src = data.audioUrl
+                    ? data.audioUrl + '?t=' + Date.now()
+                    : '/audio/audio.mp3?t=' + Date.now();
                 applyFrequencyData(data);
             } else if (data.status === 'error') {
                 clearInterval(iv);

@@ -60,3 +60,15 @@ def test_ml_is_cache_only_on_web(mono_song, tmp_path, monkeypatch):
     cache.put(cache.analysis_key('vidML', 'ml'), payload)
     served = app.run_analysis(mono_song, 'ml', source_id='vidML')
     assert served == payload
+
+
+def test_cache_bytes_roundtrip(tmp_path, monkeypatch):
+    """Audio blobs (HD tracks) roundtrip through the shared cache by object path."""
+    import importlib, cache
+    monkeypatch.delenv('CACHE_S3_BUCKET', raising=False)
+    monkeypatch.setenv('CACHE_DIR', str(tmp_path))
+    importlib.reload(cache)
+    name = cache.audio_name('vidAUD')
+    assert cache.get_bytes(name) is None
+    cache.put_bytes(name, b'ID3fakeaudio', 'audio/mpeg')
+    assert cache.get_bytes(name) == b'ID3fakeaudio'

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import subprocess
 from urllib.parse import urlparse, parse_qs
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response, abort
 import yt_dlp
 
 
@@ -444,6 +444,8 @@ def youtube_download():
             cached = cache.get(cache.analysis_key(sid, 'ml')) if sid else None
             with download_lock:
                 if cached is not None:
+                    # audio was stashed in the shared cache by the worker → play it from there
+                    cached = {**cached, 'audioUrl': f'/cached-audio/{sid}'}
                     download_jobs[job_id].update({'status': 'done', 'progress': 100, **cached})
                 else:
                     download_jobs[job_id].update({'status': 'error', 'error': (
@@ -507,6 +509,18 @@ def youtube_status():
 @app.route('/audio/<filename>')
 def serve_audio(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
+
+
+@app.route('/cached-audio/<vid>')
+def cached_audio(vid):
+    """Stream a precomputed HD track's audio from the shared cache (Supabase/R2/local)."""
+    if not vid or '/' in vid or '\\' in vid:
+        abort(404)
+    data = cache.get_bytes(cache.audio_name(vid))
+    if data is None:
+        abort(404)
+    return Response(data, mimetype='audio/mpeg',
+                    headers={'Cache-Control': 'public, max-age=86400'})
 
 
 if __name__ == '__main__':

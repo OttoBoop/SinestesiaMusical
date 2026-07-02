@@ -68,15 +68,23 @@ def _download(url: str) -> str:
 def precompute_url(url: str, engine: str) -> dict:
     """Download a YouTube track and precompute one engine into the shared cache."""
     vid = video_id(url) or url
-    key = cache.analysis_key(vid, engine)
-    if cache.get(key) is not None:
-        print(f'[precompute] {vid} {engine}: already cached, skipping')
-        return cache.get(key)
-    mp3 = _download(url)
+    have_analysis = cache.get(cache.analysis_key(vid, engine)) is not None
+    have_audio = cache.get_bytes(cache.audio_name(vid)) is not None
+    if have_analysis and have_audio:
+        print(f'[precompute] {vid} {engine}: analysis + audio already cached, skipping')
+        return cache.get(cache.analysis_key(vid, engine))
+    mp3 = _download(url)                 # needed for analysis and/or the audio upload
     try:
-        result = precompute_file(mp3, vid, engine)
-        print(f'[precompute] {vid} {engine}: cached '
-              f'({[c["name"] for c in result["components"]]})')
+        result = cache.get(cache.analysis_key(vid, engine))
+        if not have_analysis:
+            result = precompute_file(mp3, vid, engine)
+            print(f'[precompute] {vid} {engine}: analysis cached '
+                  f'({[c["name"] for c in result["components"]]})')
+        # Stash the audio so the site plays HD tracks from the shared cache (no live download).
+        if not have_audio:
+            with open(mp3, 'rb') as f:
+                cache.put_bytes(cache.audio_name(vid), f.read(), 'audio/mpeg')
+            print(f'[precompute] {vid}: audio stored')
         return result
     finally:
         shutil.rmtree(os.path.dirname(mp3), ignore_errors=True)
