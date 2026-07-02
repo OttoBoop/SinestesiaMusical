@@ -86,7 +86,9 @@ def _to_mono(x, target_sr):
     return mono
 
 
-def separate(path, model_path, target_sr=MDX_SR, threads=1):
+def separate(path, model_path, target_sr=MDX_SR, threads=None):
+    if threads is None:
+        threads = int(os.environ.get('MDX_THREADS', '1'))   # worker sets this high; free tier stays 1
     """Return (vocals_mono, instrumental_mono) at target_sr for an Inst MDX model."""
     so = ort.SessionOptions()
     so.intra_op_num_threads = threads
