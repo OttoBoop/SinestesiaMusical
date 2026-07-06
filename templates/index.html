@@ -255,6 +255,36 @@
         }
         .spiral-placeholder .big-icon { font-size: 3.5rem; display: block; margin-bottom: 10px; }
 
+        /* ── 'all' view: separate spirals side by side (never overlapped) ── */
+        #spiral-grid {
+            display: none;
+            width: 100%;
+            max-width: 760px;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        }
+        #spiral-grid.visible { display: grid; }
+        .spiral-cell {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            background: #0d0d1a;
+            border: 1px solid #1a1a35;
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        .spiral-cell canvas { width: 100%; height: 100%; display: block; }
+        .spiral-cell .cell-label {
+            position: absolute; top: 8px; left: 10px;
+            font-size: .82rem; color: #e6e6f2; font-weight: 600;
+            display: flex; align-items: center; gap: 6px;
+            text-shadow: 0 1px 4px #000; pointer-events: none;
+        }
+        .spiral-cell .cell-label .dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+        .spiral-cell .cell-freq {
+            position: absolute; bottom: 8px; right: 11px;
+            font-size: .76rem; color: #9a9ac0; text-shadow: 0 1px 4px #000; pointer-events: none;
+        }
+
         /* ── Controls ── */
         .controls { width: 100%; display: flex; flex-direction: column; gap: 10px; }
         .freq-info {
@@ -398,6 +428,8 @@
                 The spiral will appear here once audio is loaded
             </div>
         </div>
+        <!-- 'all' view: one SEPARATE filled spiral per component, side by side (built in JS) -->
+        <div id="spiral-grid"></div>
 
         <style>
         .engine-bar{display:none;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:12px 0}
@@ -526,82 +558,110 @@ function hueFromFreq(freq) {
     return x - Math.floor(x);           // 0..1
 }
 
-// Radius from frequency: log map over ~6 octaves (55–3520 Hz) so bass, melody and bright
-// percussive components all use a good slice of the spiral instead of clamping to the edge.
-const R_LO_HZ = 55, R_HI_HZ = 3520;
-const _R_LOG_SPAN = Math.log2(R_HI_HZ / R_LO_HZ);
+// Radius from frequency — the ORIGINAL mapping that worked: clamp the raw detected Hz into
+// [SPIRAL_A, SPIRAL_R_MAX]. Because _R[i] grows exponentially along the spiral, the fill
+// fraction is already logarithmic in frequency, so musical pitches (≈65–520 Hz — exactly the
+// range these songs analyse to) fill MOST of the spiral instead of a tiny blob at the centre.
+// (The old 55–3520 Hz log map squeezed every real melody into the inner ~15% → looked empty.)
 function radiusFromFreq(freq) {
-    const f = Math.min(Math.max(freq, R_LO_HZ), R_HI_HZ);
-    const frac = Math.log2(f / R_LO_HZ) / _R_LOG_SPAN;
-    return SPIRAL_A + frac * (SPIRAL_R_MAX - SPIRAL_A);
+    return Math.max(SPIRAL_A, Math.min(freq, SPIRAL_R_MAX));
 }
 
-function _scale() {
-    return (Math.min(canvas.width, canvas.height) / 2 - 18) / SPIRAL_R_MAX;
+function _scaleFor(w, h) {
+    return (Math.min(w, h) / 2 - 18) / SPIRAL_R_MAX;
 }
 
-// Background + faint full guide spiral — drawn ONCE per frame, before the layers.
-function clearCanvas() {
-    const W = canvas.width, H = canvas.height, cx = W / 2, cy = H / 2, scale = _scale();
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-    ctx.beginPath();
+// Background + faint full guide spiral, drawn into ANY canvas context.
+function drawGuideInto(g, w, h) {
+    const cx = w / 2, cy = h / 2, scale = _scaleFor(w, h);
+    g.fillStyle = BG;
+    g.fillRect(0, 0, w, h);
+    g.beginPath();
     for (let i = 0; i <= N_SPIRAL_PTS; i++) {
         const x = cx + scale * _R[i] * Math.sin(_PHI[i]);
         const y = cy - scale * _R[i] * Math.cos(_PHI[i]);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-    ctx.lineWidth = 1.0;
-    ctx.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.07)';
+    g.lineWidth = 1.0;
+    g.stroke();
 }
 
-// Draw ONE component's spiral (no clear). freq → radius+hue; energy → opacity/thickness.
-// filled=true  → the classic solid wedge (used for the single/focused spiral).
-// filled=false → a glowing spiral ARM (stroke) that layers legibly without occluding the
-//                others (solid wedges overlap into one blob — verified — so 'all' uses arms).
-// rot rotates each layer a little so overlapping arms stay distinct.
-function drawSpiralLayer(freq, energy, rot, filled) {
-    const cx = canvas.width / 2, cy = canvas.height / 2, scale = _scale();
+// Draw ONE component's spiral as the classic bright FILLED wedge into ANY canvas context.
+// freq → radius + hue (log-frequency); energy → fill opacity. Always filled — no overlap,
+// because the 'all' view gives each component its OWN canvas (wedges never occlude each other).
+function drawWedgeInto(g, w, h, freq, energy) {
+    const cx = w / 2, cy = h / 2, scale = _scaleFor(w, h);
     const radius = radiusFromFreq(freq);
     let coloredEnd = 0;
     for (let i = 0; i <= N_SPIRAL_PTS; i++) { if (_R[i] <= radius) coloredEnd = i; else break; }
     if (coloredEnd < 2) return;
 
-    const toXY = (phi, r) => [cx + scale * r * Math.sin(phi + rot), cy - scale * r * Math.cos(phi + rot)];
-    const [r, g, b] = hsvToRgb(hueFromFreq(freq), 1, 1);
+    const toXY = (phi, r) => [cx + scale * r * Math.sin(phi), cy - scale * r * Math.cos(phi)];
+    const [cr, cg, cb] = hsvToRgb(hueFromFreq(freq), 1, 1);
     const e = Math.max(0, Math.min(1, energy));
-
-    if (filled) {
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        for (let i = 0; i <= coloredEnd; i++) { const [x, y] = toXY(_PHI[i], _R[i]); ctx.lineTo(x, y); }
-        ctx.closePath();
-        ctx.fillStyle = `rgba(${r},${g},${b},${(0.55 + 0.30 * e).toFixed(3)})`;
-        ctx.shadowColor = `rgb(${r},${g},${b})`;
-        ctx.shadowBlur = 22;
-        ctx.fill();
-        ctx.shadowBlur = 0;
-    } else {
-        ctx.beginPath();
-        for (let i = 0; i <= coloredEnd; i++) { const [x, y] = toXY(_PHI[i], _R[i]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
-        ctx.strokeStyle = `rgba(${r},${g},${b},${(0.45 + 0.5 * e).toFixed(3)})`;
-        ctx.lineWidth = 3 + 7 * e;
-        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.shadowColor = `rgb(${r},${g},${b})`;
-        ctx.shadowBlur = 14;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-    }
+    const tracePath = () => {
+        g.beginPath();
+        g.moveTo(cx, cy);
+        for (let i = 0; i <= coloredEnd; i++) { const [x, y] = toXY(_PHI[i], _R[i]); g.lineTo(x, y); }
+        g.closePath();
+    };
+    tracePath();
+    g.fillStyle = `rgba(${cr},${cg},${cb},${(0.72 + 0.15 * e).toFixed(3)})`;
+    g.fill();
+    tracePath();
+    g.fillStyle = `rgba(${cr},${cg},${cb},0.18)`;
+    g.shadowColor = `rgb(${cr},${cg},${cb})`;
+    g.shadowBlur = 22;
+    g.fill();
+    g.shadowBlur = 0;
 
     // bright leading tip
     const [x0, y0] = toXY(_PHI[coloredEnd - 1], _R[coloredEnd - 1]);
     const [x1, y1] = toXY(_PHI[coloredEnd], _R[coloredEnd]);
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
-    ctx.strokeStyle = `rgba(${r},${g},${b},1)`;
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1);
+    g.strokeStyle = `rgba(${cr},${cg},${cb},1)`;
+    g.lineWidth = 3;
+    g.stroke();
 }
+
+// ── 'all' view grid: one <canvas> per component (SEPARATE spirals, side by side) ──
+const gridEl = document.getElementById('spiral-grid');
+let gridCells = [];                 // [{canvas, ctx, freqEl}]
+const CELL_PX = 300;
+
+function buildGrid() {
+    gridEl.innerHTML = '';
+    gridCells = [];
+    components.forEach(c => {
+        const mean = c.freqs.reduce((a, b) => a + b, 0) / c.freqs.length;
+        const [cr, cg, cb] = hsvToRgb(hueFromFreq(mean), 1, 1);
+        const cell = document.createElement('div');
+        cell.className = 'spiral-cell';
+        const cv = document.createElement('canvas');
+        cv.width = CELL_PX; cv.height = CELL_PX;
+        const label = document.createElement('div');
+        label.className = 'cell-label';
+        label.innerHTML = `<span class="dot" style="color:rgb(${cr},${cg},${cb})"></span>${escHtml(c.name)}`;
+        const freqEl = document.createElement('div');
+        freqEl.className = 'cell-freq';
+        cell.appendChild(cv); cell.appendChild(label); cell.appendChild(freqEl);
+        gridEl.appendChild(cell);
+        gridCells.push({ canvas: cv, ctx: cv.getContext('2d'), freqEl });
+    });
+}
+
+// Show the single big spiral OR the grid of separate spirals, per viewMode.
+function syncViews() {
+    const multi = components.length > 1;
+    const showGrid = viewMode === 'all' && multi;
+    gridEl.classList.toggle('visible', showGrid);
+    document.querySelector('.spiral-wrap').style.display = showGrid ? 'none' : '';
+    if (showGrid && gridCells.length !== components.length) buildGrid();
+}
+
+// Back-compat wrapper for the main (single-view) canvas.
+function clearCanvas() { drawGuideInto(ctx, canvas.width, canvas.height); }
 
 // Draw a static dark placeholder on load
 (function() {
@@ -664,17 +724,19 @@ function updateViewToggle() {
     viewToggleBtn.style.display = multi ? '' : 'none';
     viewToggleBtn.classList.toggle('on', viewMode === 'all' && multi);
     viewToggleBtn.textContent = 'Spirals: ' + (viewMode === 'all' && multi ? 'all' : 'single');
+    syncViews();
 }
 
 function reanalyze() {
     if (!lastSource) return;
     if (lastSource.type === 'file') handleFile(lastSource.file);
+    else if (lastSource.type === 'hd') loadHDTrack(lastSource.id, lastSource.title);
     else loadYouTubeUrl(lastSource.url, lastSource.title);
 }
 
 let components = [];        // [{name, times, freqs, energy}] — one per spiral
 let currentEngine = 'melody';
-let viewMode = 'all';       // 'single' | 'all'
+let viewMode = 'single';    // 'single' | 'all' — default single so every track opens as ONE bright filled spiral
 let focusedIndex = 0;
 let animId = null;
 let lastSource = null;      // {type:'file',file} | {type:'yt',url,title}
@@ -731,7 +793,7 @@ function applyFrequencyData(data) {
                         energy: (data.frequencies || []).map(() => 1) }];
     }
     focusedIndex = 0;
-    viewMode = components.length > 1 ? 'all' : 'single';
+    viewMode = 'single';    // always open as one focused filled spiral; user opts into 'all' via the toggle
     updateViewToggle();
     renderLegend();
     updateStats();
@@ -784,18 +846,25 @@ function startAnimation() {
         progressFill.style.width = (t / dur * 100) + '%';
         timeDisplay.textContent  = formatTime(t) + ' / ' + formatTime(dur);
 
-        clearCanvas();
         const n = components.length;
         if (n) {
             if (viewMode === 'all' && n > 1) {
+                // one SEPARATE filled spiral per component, each in its own canvas (no overlap)
+                if (gridCells.length !== n) buildGrid();
                 for (let i = 0; i < n; i++) {
+                    const cell = gridCells[i];
+                    if (!cell) continue;
                     const { freq, energy } = sampleSeries(components[i], t);
-                    drawSpiralLayer(freq, energy, i * (2 * Math.PI / n) * 0.5, false);
+                    drawGuideInto(cell.ctx, cell.canvas.width, cell.canvas.height);
+                    drawWedgeInto(cell.ctx, cell.canvas.width, cell.canvas.height, freq, energy);
+                    cell.freqEl.textContent = Math.round(freq) + ' Hz';
                 }
             } else {
+                // single focused spiral in the main canvas
                 const s = components[focusedIndex] || components[0];
                 const { freq, energy } = sampleSeries(s, t);
-                drawSpiralLayer(freq, energy, 0, true);
+                drawGuideInto(ctx, canvas.width, canvas.height);
+                drawWedgeInto(ctx, canvas.width, canvas.height, freq, energy);
             }
             const { freq } = sampleSeries(components[focusedIndex] || components[0], t);
             freqDisplay.textContent = Math.round(freq);
@@ -947,6 +1016,29 @@ async function loadYouTubeUrl(url, title) {
     }
 }
 
+// Load a pre-saved HD track STRAIGHT from the shared cache — no YouTube, no /youtube-download,
+// no job poller, no "Downloading" bar. This is what the HD Library uses.
+async function loadHDTrack(id, title) {
+    lastSource = { type: 'hd', id, title };
+    retryBtn.classList.add('hidden');
+    stopAnimation();
+    selectEngine('ml');
+    setStatus('analyzing', title ? `Loading "${title}"…` : 'Loading HD track…');
+    showDlProgress(false);          // served from cache — there is no download to show
+    try {
+        const res  = await fetch('/hd-track/' + encodeURIComponent(id));
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            failDownload(data.error || 'This HD track is not ready yet — please try another.');
+            return;
+        }
+        audioPlayer.src = (data.audioUrl || ('/cached-audio/' + id)) + '?t=' + Date.now();
+        applyFrequencyData(data);
+    } catch (err) {
+        failDownload('Network error — please check your connection.');
+    }
+}
+
 function failDownload(message) {
     showDlProgress(false);
     setStatus('error', message);
@@ -1025,8 +1117,7 @@ async function loadHDLibrary() {
                 `<div class="t">${escHtml(tr.title || tr.id)}</div>` +
                 `<div class="d">✨ Vocal HD${tr.duration ? ' · ' + fmtDur(tr.duration) : ''}</div>`;
             card.addEventListener('click', () => {
-                selectEngine('ml');
-                loadYouTubeUrl('https://www.youtube.com/watch?v=' + tr.id, tr.title || tr.id);
+                loadHDTrack(tr.id, tr.title || tr.id);
             });
             list.appendChild(card);
         });

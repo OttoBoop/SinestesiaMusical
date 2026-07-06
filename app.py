@@ -529,6 +529,20 @@ def hd_library():
     return jsonify({'tracks': cache.get_library()})
 
 
+@app.route('/hd-track/<vid>')
+def hd_track(vid):
+    """Serve a pre-saved HD track STRAIGHT from the shared cache — analysis + audioUrl —
+    with NO YouTube download and NO job machinery. This is the path the HD Library uses so
+    clicking a saved song never triggers a download (yt-dlp is never even reached here)."""
+    if not vid or '/' in vid or '\\' in vid:
+        abort(404)
+    cached = cache.get(cache.analysis_key(vid, 'ml'))
+    if cached is None:
+        return jsonify({'error': 'This track is not ready yet — it is still being prepared.'}), 404
+    result = {**cached, 'audioUrl': f'/cached-audio/{vid}'}
+    return jsonify(result)
+
+
 if __name__ == '__main__':
     # Production runs under gunicorn (see scripts/start.sh); this branch is for
     # local `python app.py`. Honour $PORT so it matches the container default.
