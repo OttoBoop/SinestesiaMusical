@@ -155,7 +155,10 @@ def engine_hpss(path, beta=2.0):
     harm = mag * mh; del mh
     perc = mag * mp; del mp
     return [
-        _component('harmonic', harm, freqs, _hps_pitch(harm, freqs)),
+        # Search the harmonic pitch from 120 Hz up: the harmonic mask keeps sustained BASS
+        # too, and unrestricted HPS locks onto the ~65 Hz bass fundamental (a near-static
+        # tiny spiral). Starting at 120 Hz surfaces the actual melody/voice/keys instead.
+        _component('harmonic', harm, freqs, _hps_pitch(harm, freqs, fmin=120.0)),
         _component('percussive', perc, freqs, _centroid_pitch(perc, freqs, FMIN, 8000.0)),
     ]
 
