@@ -263,25 +263,55 @@ def _pitched_component(name, times, freqs, energy):
     return {'name': name, 'times': times, 'freqs': freqs, 'energy': energy}
 
 
-def engine_ml(path):
-    """HD separation (self-hosted ONNX MDX-Net, torch-free) → vocals vs instrumental, each with
-    a CORRECT pitch track (pyin on the separated stem — not HPS, which mis-tracked the notes).
+def _drum_series(y):
+    """Drums have no pitch — drive the spiral by percussive BRIGHTNESS (spectral centroid:
+    kick→small, snare/hats→big) with loudness as intensity, so the spiral pulses on the beat."""
+    import librosa
+    cen = librosa.feature.spectral_centroid(y=y, sr=ANALYSIS_SR, n_fft=2048, hop_length=HOP)[0]
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=HOP, center=True)[0]
+    times = librosa.times_like(cen, sr=ANALYSIS_SR, hop_length=HOP)
+    n = min(len(cen), len(rms), len(times))
+    cen, rms, times = cen[:n], rms[:n].astype(np.float64), times[:n]
+    frac = np.clip((cen[:n] - 300.0) / (6000.0 - 300.0), 0.0, 1.0)   # map brightness → radius band
+    freqs = 70.0 + frac * (500.0 - 70.0)
+    mx = float(rms.max())
+    energy = rms / mx if mx > 0 else rms
+    freqs = np.where(energy > 0.05, freqs, 0.0)                       # only on a hit
+    return times.tolist(), freqs.tolist(), energy.tolist()
 
-    Heavy so it is NOT exposed inline on the free web tier; runs via precompute + cache. Raises
-    a clean error if the model isn't present so the caller maps it to a friendly message."""
-    import mdx
-    if not os.path.exists(MDX_MODEL_PATH):
-        raise RuntimeError('ML separation model not available on this server')
-    vocals, instrumental = mdx.separate(path, MDX_MODEL_PATH, target_sr=ANALYSIS_SR)
-    # Energy-gate only (removes non-vocal bleed). A pyin-confidence gate was tried but it
-    # gutted coverage on rough/belted vocals (Zitti 60%→19% voiced) for little in-scale gain;
-    # energy-only lands both test songs at ~84-85% in-scale — the pyin ground-truth ceiling.
-    vt, vf, ve = _pyin_pitch(vocals, 65.0, 1000.0)          # sung melody
-    it, if_, ie = _pyin_pitch(instrumental, 40.0, 400.0)    # bass/low line (coherent monophonic-ish)
-    return [
-        _pitched_component('vocals', vt, vf, ve),
-        _pitched_component('instrumental', it, if_, ie),
-    ]
+
+def _stem_component(name, y, fmin, fmax):
+    t, f, e = _pyin_pitch(np.asarray(y, np.float32), fmin, fmax)
+    return _pitched_component(name, t, f, e)
+
+
+# per-stem pitch bands (Hz) for the melodic stems
+STEM_BANDS = {'vocals': (65.0, 1000.0), 'bass': (30.0, 350.0),
+              'guitar': (80.0, 1200.0), 'piano': (50.0, 1200.0), 'other': (60.0, 1200.0)}
+STEM_ORDER = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other']
+
+
+def engine_ml(path):
+    """HD multi-instrument separation (Demucs htdemucs_6s) → SIX stems, each with the right
+    signal: melodic stems (vocals/bass/guitar/piano/other) get a correct pyin F0 track; drums
+    get a percussive brightness+loudness track. One spiral per instrument.
+
+    Heavy (torch/demucs) so it runs ONLY in the off-tier precompute worker; the web tier serves
+    the cached result. Lazy imports keep torch off the 512 MB tier."""
+    import stems
+    st = stems.separate_6stem(path)                        # {drums,bass,other,vocals,guitar,piano}
+    comps = []
+    for name in STEM_ORDER:
+        y = st.get(name)
+        if y is None:
+            continue
+        if name == 'drums':
+            dt, df, de = _drum_series(np.asarray(y, np.float32))
+            comps.append(_pitched_component('drums', dt, df, de))
+        else:
+            lo, hi = STEM_BANDS[name]
+            comps.append(_stem_component(name, y, lo, hi))
+    return comps
 
 
 ENGINES = {
