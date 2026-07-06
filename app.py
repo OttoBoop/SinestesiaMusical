@@ -531,16 +531,56 @@ def serve_audio(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
 
+def _ranged_audio_response(data, mimetype='audio/mpeg'):
+    """Serve in-memory audio bytes WITH HTTP Range support (206 Partial Content).
+
+    Without this the browser can't SEEK a cached HD track — a plain 200 with no
+    Accept-Ranges makes the <audio> element non-seekable, so clicking the progress bar
+    does nothing and the timer feels dead. Honour `Range: bytes=start-end` (and suffix
+    ranges) → 206 + Content-Range; a bad range → 416; no range → full 200."""
+    total = len(data)
+    common = {'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400'}
+    rng = request.headers.get('Range')
+    if rng:
+        try:
+            units, spec = rng.split('=', 1)
+            if units.strip().lower() != 'bytes':
+                raise ValueError
+            start_s, _, end_s = spec.partition('-')
+            if start_s == '':                       # suffix: last N bytes
+                n = int(end_s); start = max(0, total - n); end = total - 1
+            else:
+                start = int(start_s)
+                end = int(end_s) if end_s else total - 1
+            end = min(end, total - 1)
+            if start > end or start >= total or start < 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            resp = Response(status=416)
+            resp.headers['Content-Range'] = f'bytes */{total}'
+            resp.headers.update(common)
+            return resp
+        chunk = data[start:end + 1]
+        resp = Response(chunk, status=206, mimetype=mimetype)
+        resp.headers['Content-Range'] = f'bytes {start}-{end}/{total}'
+        resp.headers['Content-Length'] = str(len(chunk))
+        resp.headers.update(common)
+        return resp
+    resp = Response(data, mimetype=mimetype)
+    resp.headers['Content-Length'] = str(total)
+    resp.headers.update(common)
+    return resp
+
+
 @app.route('/cached-audio/<vid>')
 def cached_audio(vid):
-    """Stream a precomputed HD track's audio from the shared cache (Supabase/R2/local)."""
+    """Stream a precomputed HD track's audio from the shared cache, WITH range/seek support."""
     if not vid or '/' in vid or '\\' in vid:
         abort(404)
     data = cache.get_bytes(cache.audio_name(vid))
     if data is None:
         abort(404)
-    return Response(data, mimetype='audio/mpeg',
-                    headers={'Cache-Control': 'public, max-age=86400'})
+    return _ranged_audio_response(data)
 
 
 @app.route('/hd-library')

@@ -842,9 +842,13 @@ function startAnimation() {
     stopAnimation();
     function frame() {
         const t   = audioPlayer.currentTime;
-        const dur = audioPlayer.duration || 1;
-        progressFill.style.width = (t / dur * 100) + '%';
-        timeDisplay.textContent  = formatTime(t) + ' / ' + formatTime(dur);
+        // Guard against a non-finite duration (Infinity/NaN before metadata resolves, or on a
+        // non-seekable stream) — otherwise formatTime(Infinity) prints "Infinity:NaN".
+        const durRaw = audioPlayer.duration;
+        const hasDur = isFinite(durRaw) && durRaw > 0;
+        const dur = hasDur ? durRaw : 0;
+        progressFill.style.width = (hasDur ? (t / dur * 100) : 0) + '%';
+        timeDisplay.textContent  = formatTime(t) + ' / ' + (hasDur ? formatTime(dur) : '--:--');
 
         const n = components.length;
         if (n) {
