@@ -57,12 +57,12 @@ def _download(url: str) -> str:
     if os.environ.get('YTDLP_PROXY'):
         opts['proxy'] = os.environ['YTDLP_PROXY']
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+        info = ydl.extract_info(url, download=True)   # downloads AND returns metadata
     mp3s = glob.glob(os.path.join(tmp, '*.mp3'))
     if not mp3s:
         shutil.rmtree(tmp, ignore_errors=True)
         raise RuntimeError('download produced no mp3')
-    return mp3s[0]
+    return mp3s[0], (info or {})
 
 
 def precompute_url(url: str, engine: str) -> dict:
@@ -73,7 +73,7 @@ def precompute_url(url: str, engine: str) -> dict:
     if have_analysis and have_audio:
         print(f'[precompute] {vid} {engine}: analysis + audio already cached, skipping')
         return cache.get(cache.analysis_key(vid, engine))
-    mp3 = _download(url)                 # needed for analysis and/or the audio upload
+    mp3, info = _download(url)            # needed for analysis and/or the audio upload
     try:
         result = cache.get(cache.analysis_key(vid, engine))
         if not have_analysis:
@@ -85,6 +85,12 @@ def precompute_url(url: str, engine: str) -> dict:
             with open(mp3, 'rb') as f:
                 cache.put_bytes(cache.audio_name(vid), f.read(), 'audio/mpeg')
             print(f'[precompute] {vid}: audio stored')
+        # Make the HD track discoverable in the site's library.
+        if engine == 'ml':
+            cache.add_to_library({'id': vid, 'title': info.get('title') or vid,
+                                  'duration': info.get('duration'),
+                                  'thumb': f'https://i.ytimg.com/vi/{vid}/mqdefault.jpg'})
+            print(f'[precompute] {vid}: added to HD library')
         return result
     finally:
         shutil.rmtree(os.path.dirname(mp3), ignore_errors=True)

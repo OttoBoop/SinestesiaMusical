@@ -321,13 +321,30 @@
 
 <div class="container">
 
+    <style>
+        .hd-intro{font-size:.9rem;color:#9a9ac8;margin:0 0 12px;text-align:center}
+        .hd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+        .hd-card{background:#16162a;border:1px solid #2a2a4a;border-radius:10px;overflow:hidden;cursor:pointer;transition:transform .12s,border-color .12s}
+        .hd-card:hover{transform:translateY(-3px);border-color:#6a6ad0}
+        .hd-card img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#0d0d1a}
+        .hd-card .t{padding:8px 10px;font-size:.8rem;line-height:1.25;color:#e8e8ff;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
+        .hd-card .d{padding:0 10px 8px;font-size:.72rem;color:#8888b0}
+        .hd-loading{color:#8888b0;padding:20px;text-align:center;grid-column:1/-1}
+    </style>
     <div class="source-tabs">
-        <button class="tab-btn active" data-tab="file">📁 Upload File</button>
+        <button class="tab-btn active" data-tab="hd">✨ HD Library</button>
+        <button class="tab-btn" data-tab="file">📁 Upload File</button>
         <button class="tab-btn" data-tab="youtube">▶️ YouTube Search</button>
         <button class="tab-btn" data-tab="ytlink">🔗 YouTube Link</button>
     </div>
 
-    <div class="panel active" id="panel-file">
+    <div class="panel active" id="panel-hd">
+        <p class="hd-intro">Pre-separated tracks — click one to play it instantly with
+            <strong>Vocal HD</strong> (vocals + instrumental spirals).</p>
+        <div class="hd-grid" id="hd-list"><div class="hd-loading">Loading library…</div></div>
+    </div>
+
+    <div class="panel" id="panel-file">
         <div class="upload-card" id="drop-zone">
             <input type="file" id="audio-input" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a">
             <div class="upload-icon">🎵</div>
@@ -976,6 +993,48 @@ document.getElementById('progress-track').addEventListener('click', e => {
 audioPlayer.addEventListener('play',  () => setStatus('playing', 'Playing — spiral tracking current frequency'));
 audioPlayer.addEventListener('pause', () => setStatus('ready',   'Paused'));
 audioPlayer.addEventListener('ended', () => setStatus('ready',   'Playback finished'));
+
+// ─────────────────────────────────────────────
+//  HD Library — browse & play the pre-saved HD tracks
+// ─────────────────────────────────────────────
+function selectEngine(name) {
+    currentEngine = name;
+    document.querySelectorAll('#engine-group .seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.engine === name));
+}
+
+function fmtDur(s) {
+    s = Math.round(s || 0);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+async function loadHDLibrary() {
+    const list = document.getElementById('hd-list');
+    try {
+        const res  = await fetch('/hd-library');
+        const data = await res.json();
+        const tracks = data.tracks || [];
+        if (!tracks.length) { list.innerHTML = '<div class="hd-loading">No HD tracks yet.</div>'; return; }
+        list.innerHTML = '';
+        tracks.forEach(tr => {
+            const card = document.createElement('div');
+            card.className = 'hd-card';
+            const thumb = tr.thumb || `https://i.ytimg.com/vi/${tr.id}/mqdefault.jpg`;
+            card.innerHTML =
+                `<img src="${thumb}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` +
+                `<div class="t">${escHtml(tr.title || tr.id)}</div>` +
+                `<div class="d">✨ Vocal HD${tr.duration ? ' · ' + fmtDur(tr.duration) : ''}</div>`;
+            card.addEventListener('click', () => {
+                selectEngine('ml');
+                loadYouTubeUrl('https://www.youtube.com/watch?v=' + tr.id, tr.title || tr.id);
+            });
+            list.appendChild(card);
+        });
+    } catch (err) {
+        list.innerHTML = '<div class="hd-loading">Couldn\'t load the library.</div>';
+    }
+}
+loadHDLibrary();
 
 </script>
 </body>

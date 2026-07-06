@@ -523,6 +523,12 @@ def cached_audio(vid):
                     headers={'Cache-Control': 'public, max-age=86400'})
 
 
+@app.route('/hd-library')
+def hd_library():
+    """The browsable list of pre-saved HD tracks (populated by the precompute worker)."""
+    return jsonify({'tracks': cache.get_library()})
+
+
 if __name__ == '__main__':
     # Production runs under gunicorn (see scripts/start.sh); this branch is for
     # local `python app.py`. Honour $PORT so it matches the container default.

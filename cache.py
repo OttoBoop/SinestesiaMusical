@@ -150,3 +150,31 @@ def get_bytes(name: str):
 
 def audio_name(video_id: str) -> str:
     return f'audio/{video_id}.mp3'
+
+
+# ── HD library manifest (the browsable list of pre-saved HD tracks) ──────────────
+LIBRARY_NAME = 'hd-library.json'
+
+
+def get_library() -> list:
+    """List of {id, title, duration, thumb} for the pre-saved HD tracks (newest first)."""
+    b = get_bytes(LIBRARY_NAME)
+    if not b:
+        return []
+    try:
+        items = json.loads(b)
+        return items if isinstance(items, list) else []
+    except ValueError:
+        return []
+
+
+def put_library(items: list) -> None:
+    put_bytes(LIBRARY_NAME, json.dumps(items).encode('utf-8'), 'application/json')
+
+
+def add_to_library(entry: dict) -> list:
+    """Add an HD track to the manifest (dedup by id). entry = {id, title, duration, thumb}."""
+    items = [e for e in get_library() if e.get('id') != entry.get('id')]
+    items.insert(0, entry)
+    put_library(items)
+    return items
