@@ -1052,7 +1052,7 @@ function pollJob(jobId, title) {
             const data = await res.json();
             if (data.status === 'downloading') {
                 const pct = data.progress || 0;
-                showDlProgress(true, pct, pct < 80 ? `Downloading… ${pct}%` : 'Analyzing frequencies…');
+                showDlProgress(true, pct, pct < 80 ? `Downloading… ${pct}%` : 'Analyzing frequencies… (can take up to a minute on the free server)');
             } else if (data.status === 'done') {
                 clearInterval(iv);
                 retryBtn.classList.add('hidden');

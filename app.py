@@ -7,6 +7,8 @@ import sys
 import tempfile
 import threading
 import subprocess
+import time
+import uuid
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, jsonify, send_from_directory, Response, abort
 import yt_dlp
@@ -100,22 +102,36 @@ def yt_extractor_args():
     }
 
 
-def cleanup_downloads() -> None:
-    """Remove any previous audio file or stray yt-dlp temp dir/partial file.
-
-    Leaving these around is what caused the intermittent
-    'Unable to rename file: audio.mp4.part -> audio.mp4' crash.
-    """
+def cleanup_old_downloads(max_age_s: int = 600) -> None:
+    """Drop audio/ytdl leftovers from FINISHED jobs, but never touch fresh files — so two
+    concurrent downloads don't delete each other's in-progress audio (the old blanket wipe
+    of every ``audio.*`` did, which is why simultaneous users clobbered one another)."""
+    now = time.time()
     for fname in os.listdir(UPLOAD_FOLDER):
+        if not (fname.startswith('audio') or fname.startswith('ytdl_')):
+            continue
         path = os.path.join(UPLOAD_FOLDER, fname)
-        if fname.startswith('audio.') or fname.startswith('ytdl_'):
-            try:
-                if os.path.isdir(path):
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    os.remove(path)
-            except OSError:
-                pass
+        try:
+            if now - os.path.getmtime(path) < max_age_s:
+                continue                      # still in use by an active job — leave it
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def cleanup_job(job_id: str) -> None:
+    """Remove just THIS job's audio file(s) — used on error so we don't touch other jobs."""
+    for path in glob.glob(os.path.join(UPLOAD_FOLDER, f'audio_{job_id}*')):
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 def download_via_ytdlp(url: str, base_path: str, progress_cb=None) -> str:
@@ -424,18 +440,19 @@ def youtube_download():
     if not is_valid_youtube_url(url):
         return jsonify({'error': 'Please provide a valid YouTube URL'}), 400
 
-    job_id = 'yt_job'
+    # Unique per request so concurrent users never clobber each other's job or audio file.
+    job_id = uuid.uuid4().hex[:12]
     with download_lock:
         download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None}
 
-    base_path = os.path.join(UPLOAD_FOLDER, 'audio')
+    base_path = os.path.join(UPLOAD_FOLDER, f'audio_{job_id}')
 
     def do_download():
         def set_progress(pct):
             with download_lock:
                 download_jobs[job_id]['progress'] = pct
 
-        cleanup_downloads()
+        cleanup_old_downloads()
 
         sid = youtube_video_id(url)
         # ML is cache-only on the web tier: serve a precomputed result, else say it's being
@@ -459,22 +476,25 @@ def youtube_download():
 
             set_progress(85)
             result = run_analysis(mp3_path, engine, source_id=sid)
+            # Play this job's own downloaded file (unless the engine already provided an
+            # audioUrl, e.g. a cached HD track). Per-job filename → no cross-user clobber.
+            result.setdefault('audioUrl', f'/audio/audio_{job_id}.mp3')
 
             with download_lock:
                 download_jobs[job_id].update({
                     'status':   'done',
                     'progress': 100,
-                    **result,          # engine, sr, components[], + legacy times/frequencies
+                    **result,          # engine, sr, components[], audioUrl, + legacy times/frequencies
                 })
 
         except AnalysisQueued as e:
-            cleanup_downloads()
+            cleanup_job(job_id)
             with download_lock:
                 download_jobs[job_id].update({'status': 'error', 'error': str(e)})
 
         except AnalysisError as e:
             # Download succeeded but analysis failed — not a YouTube problem.
-            cleanup_downloads()
+            cleanup_job(job_id)
             print(f'[youtube-download] analysis failed for {url!r} — {e}', flush=True)
             with download_lock:
                 download_jobs[job_id].update({
@@ -484,7 +504,7 @@ def youtube_download():
 
         except Exception as e:
             # Log the technical detail server-side, show a friendly message to the user.
-            cleanup_downloads()
+            cleanup_job(job_id)
             print(f'[youtube-download] failed for {url!r} — {e}', flush=True)
             with download_lock:
                 download_jobs[job_id].update({
