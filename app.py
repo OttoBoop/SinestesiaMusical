@@ -374,11 +374,15 @@ def upload():
     except OSError:
         sid = None
     try:
-        result = run_analysis(save_path, engine, source_id=sid)
-    except AnalysisQueued as e:
-        # ML on an uploaded file can't be precomputed by video id — tell the user plainly.
-        return jsonify({'error': 'HD (ML) separation is only available for YouTube tracks '
-                                 'right now. Try another engine for uploaded files.'}), 200
+        try:
+            result = run_analysis(save_path, engine, source_id=sid)
+        except AnalysisQueued:
+            # ML isn't precomputed for uploads — fall back to the standard engine instead
+            # of dead-ending the upload (same trap as the YouTube path: the HD Library
+            # leaves the engine set to ml).
+            result = run_analysis(save_path, 'melody', source_id=sid)
+            result['notice'] = ("Vocal HD isn't available for uploaded files — using the "
+                                "standard Melody engine instead.")
     except AnalysisError as e:
         print(f'[upload] analysis failed for {f.filename!r} (engine={engine}) — {e}', flush=True)
         return jsonify({'error': friendly_analysis_error(e)}), 500
@@ -454,28 +458,34 @@ def youtube_download():
 
         cleanup_old_downloads()
 
-        sid = youtube_video_id(url)
-        # ML is cache-only on the web tier: serve a precomputed result, else say it's being
-        # prepared — WITHOUT downloading + separating inline (that would OOM the free tier).
-        if engine == 'ml' and not INLINE_ML:
+        eng    = engine
+        notice = None
+        sid    = youtube_video_id(url)
+        # ML is cache-only on the web tier: serve a precomputed result if there is one —
+        # WITHOUT downloading + separating inline (that would OOM the free tier).
+        if eng == 'ml' and not INLINE_ML:
             cached = cache.get(cache.analysis_key(sid, 'ml')) if sid else None
-            with download_lock:
-                if cached is not None:
-                    # audio was stashed in the shared cache by the worker → play it from there
-                    cached = {**cached, 'audioUrl': f'/cached-audio/{sid}'}
+            if cached is not None:
+                # audio was stashed in the shared cache by the worker → play it from there
+                cached = {**cached, 'audioUrl': f'/cached-audio/{sid}'}
+                with download_lock:
                     download_jobs[job_id].update({'status': 'done', 'progress': 100, **cached})
-                else:
-                    download_jobs[job_id].update({'status': 'error', 'error': (
-                        "HD vocal separation isn't ready for this track yet — it's prepared in "
-                        "the background. Try again shortly, or use the Vocal/Harmonic engine.")})
-            return
+                return
+            # Not cached, and nothing on this tier can prepare it — fall back to the standard
+            # engine so the download still works. Dead-ending here is what made every search
+            # download "fail" once the HD Library had set the engine to ml (2026-07-07).
+            eng    = 'melody'
+            notice = ("Vocal HD isn't available for this track — using the standard Melody "
+                      "engine instead. Pre-separated songs are in the HD Library.")
 
         try:
             download_via_ytdlp(url, base_path, set_progress)
             mp3_path = base_path + '.mp3'
 
             set_progress(85)
-            result = run_analysis(mp3_path, engine, source_id=sid)
+            result = run_analysis(mp3_path, eng, source_id=sid)
+            if notice:
+                result['notice'] = notice
             # Play this job's own downloaded file (unless the engine already provided an
             # audioUrl, e.g. a cached HD track). Per-job filename → no cross-user clobber.
             result.setdefault('audioUrl', f'/audio/audio_{job_id}.mp3')

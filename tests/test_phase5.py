@@ -62,6 +62,50 @@ def test_ml_is_cache_only_on_web(mono_song, tmp_path, monkeypatch):
     assert served == payload
 
 
+def test_youtube_download_ml_miss_falls_back_to_melody(tmp_path, monkeypatch):
+    """A YouTube download asking for ml with NO cached result must NOT dead-end with an
+    instant error (the old behavior — it made every search download 'fail' once the HD
+    Library had switched the engine to ml). It falls back to melody and flags a notice."""
+    import time
+    monkeypatch.delenv('CACHE_S3_BUCKET', raising=False)
+    monkeypatch.delenv('ENABLE_ML', raising=False)
+    monkeypatch.setenv('CACHE_DIR', str(tmp_path))
+    import cache; importlib.reload(cache)
+    import app; importlib.reload(app)
+
+    ran = {}
+
+    def fake_download(url, base_path, progress_cb=None):
+        path = base_path + '.mp3'
+        with open(path, 'wb') as f:
+            f.write(b'ID3fake')
+        return path
+
+    def fake_analysis(audio_path, engine='melody', source_id=None):
+        ran['engine'] = engine
+        return {'engine': engine, 'sr': 22050,
+                'components': [{'name': 'melody', 'times': [0.0], 'freqs': [220.0], 'energy': [1.0]}],
+                'times': [0.0], 'frequencies': [220.0]}
+
+    monkeypatch.setattr(app, 'download_via_ytdlp', fake_download)
+    monkeypatch.setattr(app, 'run_analysis', fake_analysis)
+
+    client = app.app.test_client()
+    r = client.post('/youtube-download',
+                    json={'url': 'https://www.youtube.com/watch?v=notcached01', 'engine': 'ml'})
+    job_id = r.get_json()['jobId']
+
+    for _ in range(50):                      # the job runs in a background thread
+        job = client.get(f'/youtube-status?jobId={job_id}').get_json()
+        if job['status'] != 'downloading':
+            break
+        time.sleep(0.1)
+
+    assert job['status'] == 'done', job.get('error')
+    assert ran['engine'] == 'melody'         # fell back instead of erroring
+    assert 'notice' in job                   # and the user is told about it
+
+
 def test_cache_bytes_roundtrip(tmp_path, monkeypatch):
     """Audio blobs (HD tracks) roundtrip through the shared cache by object path."""
     import importlib, cache

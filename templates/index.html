@@ -455,7 +455,7 @@
                 <button class="seg-btn" data-engine="hpss">Harmonic / Perc</button>
                 <button class="seg-btn" data-engine="repet">Vocal</button>
                 <button class="seg-btn" data-engine="stereo">Stereo</button>
-                <button class="seg-btn" data-engine="ml" title="High-quality ML separation (prepared in the background)">Vocal HD</button>
+                <button class="seg-btn" data-engine="ml" title="High-quality ML separation — available for the pre-saved songs in the HD Library">Vocal HD</button>
             </div>
             <button class="view-toggle" id="view-toggle">Spirals: single</button>
             <div class="legend" id="legend"></div>
@@ -803,7 +803,10 @@ function applyFrequencyData(data) {
     infoGrid.classList.remove('hidden');
     placeholder.style.display = 'none';
     showDlProgress(false);
-    setStatus('ready', 'Ready — press play to start the spiral animation');
+    // The server may have used a different engine than requested (e.g. Vocal HD not
+    // available → Melody fallback): keep the engine buttons truthful, and surface the note.
+    if (data.engine) selectEngine(data.engine);
+    setStatus('ready', data.notice || 'Ready — press play to start the spiral animation');
     startAnimation();
 }
 
