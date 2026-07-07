@@ -27,3 +27,4 @@ cache/
 # ML model weights (downloaded/added out-of-band; not bundled on the free tier)
 models/
 *.onnx
+testassets/

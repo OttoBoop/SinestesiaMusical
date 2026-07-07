@@ -259,6 +259,61 @@ def _pyin_pitch(y, fmin, fmax, energy_gate=0.06, conf_gate=0.0):
     return times.tolist(), freqs.tolist(), energy.tolist()
 
 
+def _salience_pitch(y, fmin, fmax, energy_gate=0.06, n_fft=4096, top_k=5, penalty=0.5):
+    """Predominant-pitch track for POLYPHONIC stems (guitar/piano/other), aligned to HOP.
+
+    pyin assumes ONE F0 per frame — on chords it flickers between chord tones and octaves,
+    which is why the guitar/piano spirals came out noisy. Salamon/Gómez-style instead:
+    harmonic-salience map (weighted sum of each spectral peak's harmonics) → per frame pick
+    among the top-k salient peaks the one that best continues the previous pitch (salience
+    minus `penalty` per octave of jump) → parabolic interpolation off the bin grid → median
+    smoothing that preserves unvoiced gaps. librosa-only, so off-tier like pyin."""
+    import librosa
+    import pitch as pitchmod
+    y = np.asarray(y, np.float32)
+    S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=HOP, center=True)).astype(np.float32)
+    freqs = librosa.fft_frequencies(sr=ANALYSIS_SR, n_fft=n_fft)
+    sal = librosa.salience(S, freqs=freqs, harmonics=[1, 2, 3, 4],
+                           weights=[1.0, 0.5, 0.33, 0.25], fill_value=0.0)
+    lo = int(np.searchsorted(freqs, fmin))
+    hi = int(np.searchsorted(freqs, fmax))
+    band = np.nan_to_num(sal[lo:hi], nan=0.0)
+    n_bins, n_frames = band.shape
+
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=HOP, center=True)[0]
+    n = min(n_frames, len(rms))
+    mx = float(rms[:n].max()) if n else 0.0
+    energy = (rms[:n] / mx if mx > 0 else rms[:n]).astype(np.float64)
+
+    f0 = np.zeros(n)
+    prev = 0.0
+    kk = min(top_k, n_bins)
+    for i in range(n):
+        col = band[:, i]
+        peak = float(col.max())
+        if peak <= 0.0 or energy[i] < energy_gate:
+            continue                                   # silent / no harmonic content → 0 Hz
+        cand = np.argpartition(col, -kk)[-kk:]         # top-k salient peaks this frame
+        score = col[cand] / peak
+        fc = freqs[lo + cand]
+        if prev > 0.0:                                 # continuity: penalise big leaps
+            score = score - penalty * np.abs(np.log2(fc / prev))
+        j = int(cand[int(np.argmax(score))])
+        # parabolic interpolation of the salience peak (beats the FFT-bin grid at low Hz)
+        if 0 < j < n_bins - 1:
+            a, b, c = col[j - 1], col[j], col[j + 1]
+            denom = a - 2.0 * b + c
+            shift = 0.5 * (a - c) / denom if abs(denom) > 1e-12 else 0.0
+            shift = float(np.clip(shift, -0.5, 0.5))
+        else:
+            shift = 0.0
+        f0[i] = (lo + j + shift) * ANALYSIS_SR / n_fft
+        prev = f0[i]
+    f0 = pitchmod.smooth_f0(f0, med=9)
+    times = librosa.times_like(np.zeros(n), sr=ANALYSIS_SR, hop_length=HOP)
+    return times.tolist(), f0.tolist(), energy.tolist()
+
+
 def _pitched_component(name, times, freqs, energy):
     return {'name': name, 'times': times, 'freqs': freqs, 'energy': energy}
 
@@ -281,7 +336,12 @@ def _drum_series(y):
 
 
 def _stem_component(name, y, fmin, fmax):
-    t, f, e = _pyin_pitch(np.asarray(y, np.float32), fmin, fmax)
+    # Monophonic stems (one F0 at a time) get pyin; POLYPHONIC stems get the salience
+    # tracker — pyin on chords flickers between chord tones / locks onto low bleed
+    # (validate_stems.py: piano in-scale 66-73%, coverage down to 12%; salience 88-94%
+    # in-scale at 53-99% coverage, vocals/bass unchanged).
+    tracker = _salience_pitch if name in POLYPHONIC_STEMS else _pyin_pitch
+    t, f, e = tracker(np.asarray(y, np.float32), fmin, fmax)
     return _pitched_component(name, t, f, e)
 
 
@@ -289,6 +349,7 @@ def _stem_component(name, y, fmin, fmax):
 STEM_BANDS = {'vocals': (65.0, 1000.0), 'bass': (30.0, 350.0),
               'guitar': (80.0, 1200.0), 'piano': (50.0, 1200.0), 'other': (60.0, 1200.0)}
 STEM_ORDER = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other']
+POLYPHONIC_STEMS = {'guitar', 'piano', 'other'}
 
 
 def engine_ml(path):
