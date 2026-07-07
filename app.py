@@ -364,7 +364,10 @@ def upload():
     if not f.filename:
         return jsonify({'error': 'No file selected'}), 400
 
-    save_path = os.path.join(UPLOAD_FOLDER, 'audio.mp3')
+    # Per-request filename: two simultaneous uploads must never overwrite each other's
+    # file mid-analysis (the fixed 'audio.mp3' did exactly that). The browser plays the
+    # user's own local copy (objectURL), so the server file is analysis-only → delete after.
+    save_path = os.path.join(UPLOAD_FOLDER, f'upload_{uuid.uuid4().hex[:12]}.mp3')
     f.save(save_path)
 
     engine = (request.form.get('engine') or 'melody').strip()
@@ -389,6 +392,11 @@ def upload():
     except Exception as e:
         print(f'[upload] unexpected error for {f.filename!r} — {e}', flush=True)
         return jsonify({'error': 'Something went wrong analyzing this file.'}), 500
+    finally:
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
 
     return jsonify(result)
 
@@ -446,8 +454,13 @@ def youtube_download():
 
     # Unique per request so concurrent users never clobber each other's job or audio file.
     job_id = uuid.uuid4().hex[:12]
+    now = time.time()
     with download_lock:
-        download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None}
+        # Prune stale entries so the dict can't grow forever on a long-lived worker.
+        # 1h is far beyond any real job (download minutes + 120s analysis timeout).
+        for jid in [j for j, job in download_jobs.items() if now - job.get('ts', now) > 3600]:
+            del download_jobs[jid]
+        download_jobs[job_id] = {'status': 'downloading', 'progress': 0, 'error': None, 'ts': now}
 
     base_path = os.path.join(UPLOAD_FOLDER, f'audio_{job_id}')
 

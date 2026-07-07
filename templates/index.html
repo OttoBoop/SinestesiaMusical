@@ -947,7 +947,8 @@ const resultsList   = document.getElementById('results-list');
 ytSearchBtn.addEventListener('click', doSearch);
 ytSearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
 
-async function doSearch() {
+async function doSearch(attempt) {
+    attempt = (typeof attempt === 'number') ? attempt : 0;   // called as a click handler too
     const q = ytSearchInput.value.trim();
     if (!q) return;
     ytSearchBtn.disabled = true;
@@ -955,7 +956,17 @@ async function doSearch() {
     resultsList.classList.add('hidden');
     resultsList.innerHTML = '';
     try {
-        const res  = await fetch('/search?q=' + encodeURIComponent(q));
+        const res = await fetch('/search?q=' + encodeURIComponent(q));
+        if (res.status === 502 || res.status === 503) {
+            // Free tier waking from sleep — retry instead of dumping a raw error.
+            if (attempt < 3) {
+                setStatus('analyzing', 'The free server is waking up — retrying in a few seconds…');
+                setTimeout(() => doSearch(attempt + 1), 8000);
+                return;
+            }
+            setStatus('error', 'The server is still waking up — please try again in ~30 seconds.');
+            return;
+        }
         const data = await res.json();
         if (data.error) { setStatus('error', 'Search error: ' + data.error); return; }
         renderResults(data.results);
@@ -1053,11 +1064,23 @@ function failDownload(message) {
 }
 
 function pollJob(jobId, title) {
+    const startedAt = Date.now();
+    let   misses    = 0;
     const iv = setInterval(async () => {
         try {
+            if (Date.now() - startedAt > 6 * 60 * 1000) {   // no job takes this long
+                clearInterval(iv);
+                failDownload('This is taking far too long — the server may be overloaded. Please try again.');
+                return;
+            }
             const res  = await fetch('/youtube-status?jobId=' + jobId);
             const data = await res.json();
-            if (data.status === 'downloading') {
+            if (!res.ok || !data.status) {
+                // 404 = the server restarted mid-download (free tier) and forgot the job.
+                // Without this check the poller would spin silently forever.
+                clearInterval(iv);
+                failDownload('The server restarted while downloading — please try again.');
+            } else if (data.status === 'downloading') {
                 const pct = data.progress || 0;
                 showDlProgress(true, pct, pct < 80 ? `Downloading… ${pct}%` : 'Analyzing frequencies… (can take up to a minute on the free server)');
             } else if (data.status === 'done') {
@@ -1074,9 +1097,15 @@ function pollJob(jobId, title) {
                 failDownload(data.error || 'Download failed — please try again.');
             }
         } catch (err) {
-            clearInterval(iv);
-            failDownload('Lost connection while downloading — please try again.');
+            // Tolerate transient hiccups (mobile networks, free-tier blips) — only give
+            // up after several consecutive failed polls, not the first one.
+            if (++misses >= 5) {
+                clearInterval(iv);
+                failDownload('Lost connection while downloading — please try again.');
+            }
+            return;
         }
+        misses = 0;
     }, 800);
 }
 
