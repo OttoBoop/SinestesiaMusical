@@ -538,8 +538,10 @@ function hsvToRgb(h, s, v) {
 const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 function freqToNote(freq) {
     if (freq <= 0) return '';
+    // semitones are measured from A4=440; NOTE_NAMES starts at C, so shift by +9 (A is index 9)
+    // to name the pitch class correctly (this was off by a minor third: 440 Hz → "C4" not "A4").
     const semitones = Math.round(12 * Math.log2(freq / 440));
-    const noteIdx   = ((semitones % 12) + 12) % 12;
+    const noteIdx   = ((semitones % 12) + 12 + 9) % 12;
     const octave    = Math.floor((semitones + 57) / 12);
     return NOTE_NAMES[noteIdx] + octave;
 }
@@ -638,6 +640,7 @@ function buildGrid() {
         const [cr, cg, cb] = hsvToRgb(hueFromFreq(mean), 1, 1);
         const cell = document.createElement('div');
         cell.className = 'spiral-cell';
+        cell.title = 'Click to hide/show this instrument';
         const cv = document.createElement('canvas');
         cv.width = CELL_PX; cv.height = CELL_PX;
         const label = document.createElement('div');
@@ -646,9 +649,30 @@ function buildGrid() {
         const freqEl = document.createElement('div');
         freqEl.className = 'cell-freq';
         cell.appendChild(cv); cell.appendChild(label); cell.appendChild(freqEl);
+        // click a cell to toggle that instrument off/on (second entry point besides the legend)
+        cell.addEventListener('click', () => toggleComponent(c.name));
         gridEl.appendChild(cell);
-        gridCells.push({ canvas: cv, ctx: cv.getContext('2d'), freqEl });
+        gridCells.push({ canvas: cv, ctx: cv.getContext('2d'), freqEl, name: c.name, cell });
     });
+    applyGridVisibility();
+}
+
+// Hide/show each grid cell per hiddenComponents (no rebuild — cells stay 1:1 with components).
+function applyGridVisibility() {
+    gridCells.forEach(g => { g.cell.style.display = hiddenComponents.has(g.name) ? 'none' : ''; });
+}
+
+// Toggle one instrument's spiral off/on (keeps at least one visible).
+function toggleComponent(name) {
+    if (hiddenComponents.has(name)) {
+        hiddenComponents.delete(name);
+    } else {
+        const visible = components.filter(c => !hiddenComponents.has(c.name)).length;
+        if (visible <= 1) return;            // don't hide the last visible instrument
+        hiddenComponents.add(name);
+    }
+    applyGridVisibility();
+    renderLegend();
 }
 
 // Show the single big spiral OR the grid of separate spirals, per viewMode.
@@ -738,6 +762,7 @@ let components = [];        // [{name, times, freqs, energy}] — one per spiral
 let currentEngine = 'melody';
 let viewMode = 'single';    // 'single' | 'all' — default single so every track opens as ONE bright filled spiral
 let focusedIndex = 0;
+let hiddenComponents = new Set();   // component NAMES toggled OFF in the 'all' view (keyed by name, survives rebuilds)
 let animId = null;
 let lastSource = null;      // {type:'file',file} | {type:'yt',url,title}
 let lastYtUrl = null;
@@ -793,6 +818,7 @@ function applyFrequencyData(data) {
                         energy: (data.frequencies || []).map(() => 1) }];
     }
     focusedIndex = 0;
+    hiddenComponents = new Set();   // a fresh track shows every instrument
     viewMode = 'single';    // always open as one focused filled spiral; user opts into 'all' via the toggle
     updateViewToggle();
     renderLegend();
@@ -825,11 +851,16 @@ function renderLegend() {
     components.forEach((c, i) => {
         const mean = c.freqs.reduce((a, b) => a + b, 0) / c.freqs.length;
         const [r, g, b] = hsvToRgb(hueFromFreq(mean), 1, 1);
+        const off = hiddenComponents.has(c.name);
         const chip = document.createElement('div');
-        chip.className = 'chip' + (i === focusedIndex ? ' focused' : '');
+        chip.className = 'chip' + (viewMode === 'single' && i === focusedIndex ? ' focused' : '');
+        if (off) { chip.style.opacity = '0.4'; chip.style.textDecoration = 'line-through'; }
         chip.innerHTML = `<span class="dot" style="background:rgb(${r},${g},${b})"></span>${c.name}`;
-        chip.title = viewMode === 'single' ? 'Show this spiral' : 'Focus this spiral';
-        chip.addEventListener('click', () => { focusedIndex = i; renderLegend(); updateStats(); });
+        chip.title = viewMode === 'all' ? 'Click to show/hide this instrument' : 'Focus this spiral';
+        chip.addEventListener('click', () => {
+            if (viewMode === 'all') toggleComponent(c.name);           // toggle its spiral off/on
+            else { focusedIndex = i; renderLegend(); updateStats(); }  // single view: focus it
+        });
         legendEl.appendChild(chip);
     });
 }
@@ -860,11 +891,11 @@ function startAnimation() {
                 if (gridCells.length !== n) buildGrid();
                 for (let i = 0; i < n; i++) {
                     const cell = gridCells[i];
-                    if (!cell) continue;
+                    if (!cell || hiddenComponents.has(components[i].name)) continue;   // hidden instrument
                     const { freq, energy } = sampleSeries(components[i], t);
                     drawGuideInto(cell.ctx, cell.canvas.width, cell.canvas.height);
                     drawWedgeInto(cell.ctx, cell.canvas.width, cell.canvas.height, freq, energy);
-                    cell.freqEl.textContent = Math.round(freq) + ' Hz';
+                    cell.freqEl.textContent = freq > 0 ? (Math.round(freq) + ' Hz · ' + freqToNote(freq)) : '—';
                 }
             } else {
                 // single focused spiral in the main canvas
@@ -1040,20 +1071,38 @@ async function loadHDTrack(id, title) {
     lastSource = { type: 'hd', id, title };
     retryBtn.classList.add('hidden');
     stopAnimation();
-    selectEngine('ml');
-    setStatus('analyzing', title ? `Loading "${title}"…` : 'Loading HD track…');
-    showDlProgress(false);          // served from cache — there is no download to show
-    try {
-        const res  = await fetch('/hd-track/' + encodeURIComponent(id));
-        const data = await res.json();
-        if (!res.ok || data.error) {
-            failDownload(data.error || 'This HD track is not ready yet — please try another.');
-            return;
+    if (currentEngine === 'ml') {
+        // Vocal HD: the 6-stem result is precomputed → served instantly from the cache.
+        setStatus('analyzing', title ? `Loading "${title}"…` : 'Loading HD track…');
+        showDlProgress(false);          // served from cache — there is no download to show
+        try {
+            const res  = await fetch('/hd-track/' + encodeURIComponent(id));
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                failDownload(data.error || 'This HD track is not ready yet — please try another.');
+                return;
+            }
+            audioPlayer.src = (data.audioUrl || ('/cached-audio/' + id)) + '?t=' + Date.now();
+            applyFrequencyData(data);
+        } catch (err) {
+            failDownload('Network error — please check your connection.');
         }
-        audioPlayer.src = (data.audioUrl || ('/cached-audio/' + id)) + '?t=' + Date.now();
-        applyFrequencyData(data);
-    } catch (err) {
-        failDownload('Network error — please check your connection.');
+    } else {
+        // A classical engine on an HD track: analyze the cached audio server-side (async job).
+        setStatus('analyzing', `Analyzing "${title}" (${currentEngine})…`);
+        showDlProgress(true, 85, 'Analyzing frequencies… (can take up to a minute on the free server)');
+        audioPlayer.src = '/cached-audio/' + id + '?t=' + Date.now();     // audio can play while it analyzes
+        try {
+            const res  = await fetch('/hd-analyze/' + encodeURIComponent(id), {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ engine: currentEngine }),
+            });
+            const data = await res.json();
+            if (data.error) { failDownload(data.error); return; }
+            pollJob(data.jobId, title);
+        } catch (err) {
+            failDownload('Network error — please check your connection.');
+        }
     }
 }
 
@@ -1153,6 +1202,7 @@ async function loadHDLibrary() {
                 `<div class="t">${escHtml(tr.title || tr.id)}</div>` +
                 `<div class="d">✨ Vocal HD${tr.duration ? ' · ' + fmtDur(tr.duration) : ''}</div>`;
             card.addEventListener('click', () => {
+                selectEngine('ml');                 // HD Library opens in Vocal HD (6 stems) by default
                 loadHDTrack(tr.id, tr.title || tr.id);
             });
             list.appendChild(card);

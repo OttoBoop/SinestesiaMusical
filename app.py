@@ -626,6 +626,61 @@ def hd_track(vid):
     return jsonify(result)
 
 
+@app.route('/hd-analyze/<vid>', methods=['POST'])
+def hd_analyze(vid):
+    """Run a CLASSICAL engine (melody/bands/hpss/repet/stereo) on a pre-saved HD track's cached
+    audio, so the engine buttons work on HD-Library tracks too — not just 'Vocal HD'. Async job
+    (reuses the youtube-status poller) since inline analysis of a full song takes ~30–60s on the
+    free tier. The mp3 is already in the shared cache; result is cached by (vid, engine) so a
+    repeat click is instant. ML stays cache-only via /hd-track (never runs inline)."""
+    if not vid or '/' in vid or '\\' in vid:
+        abort(404)
+    engine = ((request.get_json(silent=True) or {}).get('engine') or 'melody').strip()
+    if engine == 'ml' or engine not in VALID_ENGINES:
+        return jsonify({'error': 'Vocal HD is served from the cache — pick a classical engine here.'}), 400
+
+    job_id = uuid.uuid4().hex[:12]
+    now = time.time()
+    with download_lock:
+        for jid in [j for j, job in download_jobs.items() if now - job.get('ts', now) > 3600]:
+            del download_jobs[jid]
+        # progress starts at 85 → the poller shows "Analyzing frequencies…" (there is no download)
+        download_jobs[job_id] = {'status': 'downloading', 'progress': 85, 'error': None, 'ts': now}
+
+    def do_analyze():
+        tmp = None
+        try:
+            result = cache.get(cache.analysis_key(vid, engine))       # instant on a repeat click
+            if result is None:
+                data = cache.get_bytes(cache.audio_name(vid))
+                if data is None:
+                    raise AnalysisError('This track has no saved audio to analyze.')
+                fd, tmp = tempfile.mkstemp(prefix=f'hd_{vid}_', suffix='.mp3', dir=UPLOAD_FOLDER)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(data)
+                result = run_analysis(tmp, engine, source_id=vid)    # isolated subprocess, caches
+            payload = {**result, 'audioUrl': f'/cached-audio/{vid}'}
+            with download_lock:
+                download_jobs[job_id].update({'status': 'done', 'progress': 100, **payload})
+        except AnalysisError as e:
+            with download_lock:
+                download_jobs[job_id].update({'status': 'error', 'error': friendly_analysis_error(e)})
+        except Exception as e:
+            print(f'[hd-analyze] {vid} {engine} failed — {e}', flush=True)
+            with download_lock:
+                download_jobs[job_id].update({'status': 'error',
+                                              'error': 'Could not analyze this track — try another engine.'})
+        finally:
+            if tmp:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+    threading.Thread(target=do_analyze, daemon=True).start()
+    return jsonify({'jobId': job_id})
+
+
 if __name__ == '__main__':
     # Production runs under gunicorn (see scripts/start.sh); this branch is for
     # local `python app.py`. Honour $PORT so it matches the container default.
